@@ -1,0 +1,1936 @@
+HalluClean: A Unified Framework to Combat Hallucinations in LLMs
+Yaxin Zhao1, Yu Zhang1
+1Harbin Institute of Technology, Harbin, China
+{yxzhao, zhangyu}@ir.hit.edu.cn,
+Abstract
+Large language models (LLMs) have achieved impressive
+performance across a wide range of natural language processing tasks, yet they often produce hallucinated content that undermines factual reliability. To address this challenge, we introduce HalluClean, a lightweight and task-agnostic framework for detecting and correcting hallucinations in LLMgenerated text. HalluClean adopts a reasoning-enhanced
+paradigm, explicitly decomposing the process into planning,
+execution, and revision stages to identify and refine unsupported claims. It employs minimal task-routing prompts
+to enable zero-shot generalization across diverse domains,
+without relying on external knowledge sources or supervised
+detectors. We conduct extensive evaluations on five representative tasks—question answering, dialogue, summarization,
+math word problems, and contradiction detection. Experimental results show that HalluClean significantly improves
+factual consistency and outperforms competitive baselines,
+demonstrating its potential to enhance the trustworthiness of
+LLM outputs in real-world applications.
+Introduction
+Large language models (LLMs) have revolutionized natural
+language processing (NLP), powering applications such as
+conversational agents, content generation, and decision support systems (Chowdhery et al. 2023; Touvron et al. 2023;
+Bang et al. 2023; Qin et al. 2023). These models leverage large-scale pretraining and are further enhanced via instruction tuning (Chung et al. 2024; Wang et al. 2022b,a)
+and alignment techniques that optimize for human preferences (Ouyang et al. 2022; Achiam et al. 2023). However, despite their remarkable fluency and versatility, LLMs
+frequently produce hallucinated or factually incorrect content (Huang et al. 2023; Ji et al. 2023), undermining their
+reliability in safety-critical contexts.
+Existing hallucination mitigation approaches typically fall
+into two categories. Retrieval-augmented generation methods (Varshney et al. 2023; Cao et al. 2023; Kang, Ni, and
+Yao 2023; Rawte et al. 2023) query external knowledge
+sources to validate or correct model outputs. Meanwhile, supervised detection approaches (Razumovskaia et al. 2024;
+Zhang et al. 2023; Qiu et al. 2023) rely on human-labeled
+Copyright © 2026, Association for the Advancement of Artificial
+Intelligence (www.aaai.org). All rights reserved.
+data to train classifiers that identify hallucinations. While
+both strategies have shown promise, they suffer from key
+limitations: retrieval-based methods depend on the availability and accuracy of external sources, and annotation-based
+methods are costly and poorly generalize to novel hallucination types. Furthermore, hallucination behaviors vary
+widely across tasks—such as question answering (Zheng,
+Huang, and Chang 2023), summarization (Cao, Dong,
+and Cheung 2022), and dialogue (Das, Saha, and Srihari
+2022)—yet most prior work focuses narrowly on specific
+settings (M¨
+undler et al. 2023), limiting scalability and robustness.
+To address these challenges, we propose a lightweight,
+task-agnostic framework for hallucination detection and correction that operates without external knowledge or taskspecific supervision. Our approach leverages minimal task
+descriptions to instantiate a task-adaptive interface, guiding
+LLMs through a reasoning-enhanced, zero-shot process. Inspired by the plan-and-solve paradigm, we decompose hallucination mitigation into explicit planning and execution
+phases, enabling models to locate unsupported claims and
+revise outputs with improved factuality.
+We introduce HalluClean, a unified framework that detects and corrects hallucinations in LLM-generated outputs via structured reasoning. HalluClean employs compact prompts to elicit multi-step reasoning traces, which
+serve both to identify hallucinated segments and to guide
+targeted revision. This plug-and-play, prompt-based design
+ensures broad applicability across model architectures and
+NLP tasks, while remaining compatible with open-source
+LLMs for privacy-preserving deployments.
+Our contributions are summarized as follows:
+• HalluClean Framework: We present a zero-shot hallucination detection and correction framework based on
+structured reasoning. HalluClean is modular and supports flexible integration with diverse LLMs, including
+open-source models.
+• Task-Agnostic Generalization: HalluClean achieves
+strong
+performance
+across
+a
+variety
+of
+NLP
+tasks—question
+answering,
+summarization,
+dialogue, math word problems, and contradiction detection—without requiring task-specific fine-tuning.
+• Domain-Level Robustness: We demonstrate HalluarXiv:2511.08916v1 [cs.CL] 12 Nov 2025
+
+Clean’s effectiveness in domain-sensitive settings such
+as medicine and finance, highlighting its potential for deployment in real-world, high-stakes applications.
+Related Work
+Hallucinations in LLMs
+Hallucinations in large language models (LLMs) have been
+extensively studied, focusing on their causes (Pan et al.
+2023; Chen and Shu 2024; Kasai et al. 2024; Wang et al.
+2023a; Lee et al. 2022; Yao et al. 2023), evaluation methodologies (Lin, Hilton, and Evans 2021; Lee et al. 2022;
+Min et al. 2023; Li et al. 2023a), and behavioral analysis (Zhao et al. 2023; Dong et al. 2024; Li et al. 2023b).
+Many studies have investigated ways to mitigate hallucinations through retrieval-augmented generation (Peng et al.
+2023; Varshney et al. 2023; Kang, Ni, and Yao 2023) and
+supervised fine-tuning (Elaraby et al. 2023; Razumovskaia
+et al. 2024; Zhang et al. 2023). To improve LLM reliability, researchers have explored prompting-based solutions.
+For example, Si et al. (2022) proposed simple yet effective prompts that enhance GPT-3’s factual accuracy, while
+Mitchell et al. (2022) introduced a two-model framework in
+which one model generates responses and another evaluates
+their logical coherence. More recently, M¨
+undler et al. (2023)
+found that 17.7% of ChatGPT-generated sentences contain
+self-contradictions and proposed a three-step pipeline to detect and mitigate them without relying on external knowledge. Despite these advancements, hallucination detection
+and mitigation in LLMs remain challenging. Our method
+uses task-adaptive prompts in a zero-shot setting to guide
+LLMs in detecting and revising hallucinated content by eliciting and leveraging model reasoning.
+Advancements in Prompting Techniques
+Prompting strategies have played a crucial role in enhancing
+the reasoning abilities of LLMs. Chain-of-Thought (CoT)
+prompting (Wei et al. 2022) explicitly structures intermediate reasoning steps, significantly improving model performance on complex reasoning tasks. Building upon this, various enhancements have been proposed, including prompt
+ensembling (Wang et al. 2022a; Li et al. 2022; Weng et al.
+2022; Fu et al. 2022), problem decomposition (Zhou et al.
+2022; Khot et al. 2022; Dua et al. 2022), and structured planning methods (Yao et al. 2022; Huang et al. 2022; Wang
+et al. 2023b; Liu et al. 2023; Sun et al. 2023). To reduce
+manual effort and computational overhead, zero-shot CoT
+prompting (Kojima et al. 2022) was introduced, allowing
+LLMs to autonomously generate reasoning steps without the
+need for labeled exemplars. However, existing methods primarily focus on general reasoning tasks, and limited work
+has explored their applicability in addressing hallucinations
+within LLM-generated text. In this work, we propose a new
+prompt-based mechanism to enhance the effectiveness of
+hallucination detection and ensuring more reliable correction.
+Method
+We introduce HalluClean, a task-agnostic framework for
+hallucination detection and correction in LLMs. It leverages
+structured reasoning guided by minimal task prompts and
+operates in zero-shot settings.
+Taxonomy of Hallucinations in LLMs
+LLMs support diverse applications—summarization, QA,
+dialogue, and problem solving—but frequently generate factually inconsistent or logically contradictory content, known
+as hallucinations. These typically arise when generated outputs lack grounding in verifiable knowledge or logic. To address this, we define a task-specific taxonomy based on five
+representative NLP scenarios:
+Question Answering
+Hallucinations manifest as unsupported claims, misinterpreted context, or factual errors that
+deviate from the input or common knowledge.
+Dialogue Systems
+Errors often stem from entity mismatches—substituting similar, dissimilar, or cross-type entities—leading to factual incoherence with the dialogue history.
+Summarization
+Generated summaries may include unverifiable details or fabricate facts not grounded in the
+source text, often misrepresenting entities or relations.
+Math Word Problems
+Under-specified or ill-posed problems cause hallucinations when essential constraints are
+missing, variables are vague, or assumptions violate logic
+(e.g., negative quantities where not allowed).
+Self-contradiction
+Contradictions within the same response (e.g., mutually exclusive statements) signal hallucination. Such contradictions appear in 17.7% of ChatGPTgenerated sentences (M¨
+undler et al. 2023), providing a direct
+inconsistency cue.
+HalluClean: A Unified Framework
+Based on our analysis of hallucination patterns, we propose HalluClean, the framework is composed of two main
+modules: reasoning-enhanced hallucination detection module and targeted revision module. HalluClean is designed
+to adapt to various task settings and requires no taskspecific fine-tuning. Figure 1 provides an overview of HalluClean’s architecture. The framework first detects hallucination through structured reasoning, and then modifies the
+hallucinated parts based on the rationale. The framework
+uses modular prompt templates, enabling easy adaptation
+across tasks and LLM architectures. The following section
+describes each component of our framework.
+Hallucination
+Detection
+We
+employ
+the
+structuralreasoning-enhanced detection module to assess the factual
+consistency of the generated output. This component constitutes the core technical innovation of our approach. Rather
+than directly prompting for a binary classification, we guide
+the model through a structured three-step reasoning process.
+This process yields a reliable binary judgment indicating
+
+Text 1: However, Gollob's career was cut
+short in 1944 ,when he was injured in
+a flying accident.
+Text 2: Gordon Gollob was injured in a car
+accident in 1943, which ended his combat
+career.
+Text 1 mentions a flying accident in 1944. Text 2 mentions a car accident in 1943. Therefore, based on the
+comparison of the key details in both texts, it can be concluded that the information provided in the two texts is
+contradictory.
+Hallucination Detection
+Task Input
+1. Task-oriented Planning
+You are given two texts. Your task is to determine whether
+ the information in the two texts is contradictory.
+Let's understand the task and devise a plan to solve the task.
+ To solve this task, we need to compare the information
+provided in both texts regarding Gordon Gollob's injury that
+ended his combat career.
+2. Plan-guided Reasoning
+Subject
+Gollob
+Gollob
+Action
+injured in a flying accident
+injured in a car accident
+Time
+1944
+1943
+Identify Key
+Information
+3. Final Judgement
+Please give the final judgement with Yes or No.
+4. Content Refinement
+Hallucination Revision
+Generate the revised version.
+YES
+NO
+Analysis
+Gordon Gollob was injured in
+a car flying accident in 1943 1944,
+which ended his combat career.
+YES
+There is a contradiction in the type
+of accident (flying accident vs. car
+accident) and the year of the
+accident (1944 vs. 1943),
+indicating conflicting information.
+Original Input
+Text 1: ..... Text 2: .....
+Revised
+Text 1
+Text 2
+Let's carry out the plan and solve the task step by step. Show the reasoning process.
+Compare Key
+Information
+Figure 1: Overview of the HalluClean framework. It consists of two modules: hallucination detection and revision. The detection module generates a task-specific plan, performs step-by-step reasoning, and makes a final judgment. If a hallucination is
+detected, the revision module revises the content based on the identified reasoning to eliminate hallucinated information.
+whether hallucination is present, along with a detailed reasoning trace explaining the rationale behind this determination.
+Hallucination Revision
+If any hallucination is detected,
+the framework activates the revision module. Rather than
+modifying the content directly, the model performs revision based on the reasoning trace generated during detection. This ensures that the correction is guided by explicit
+analysis, improving the reliability and quality of the revision. By preserving accurate content and focusing only on
+identified issues, this targeted strategy makes the correction
+process more precise and controllable.
+The detection and revision modules together form a unified pipeline for identifying and correcting hallucinations.
+This design ensures factual consistency, improves interpretability, and enhances control over the generation process.
+Task-Oriented Routing
+For each supported task type,
+we design a concise task-specific prompt that provides the
+model with minimal yet sufficient context to understand its
+objective. These prompts serve as task adapters, allowing
+HalluClean to flexibly operate across diverse applications
+without requiring fine-tuning or additional training data. Table 1 presents examples of task routing prompts for different
+NLP tasks.
+Structural Reasoning Mechanism
+The core innovation
+of HalluClean lies in its structural reasoning mechanism for
+hallucination detection. While direct classification can identify obvious hallucinations, we find that step-by-step reasoning significantly improves detection accuracy, especially for
+subtle or complex hallucination cases. Our approach draws
+inspiration from cognitive science literature on human reasoning, which emphasizes the role of structured thinking in
+error detection and verification (Kahneman 2011).
+We implement this insight through a four-step promptbased inference mechanism, as illustrated in Figure 1 and
+detailed below:
+Step 1: Task-oriented Planning The first step guides the
+model to develop a systematic approach tailored to the specific task and input. The planning prompt follows this template:
+[INPUT] Task Input
+[TASK] Task Description
+Let’s understand the task and devise a plan to solve
+the task.
+This planning step serves multiple important functions: it
+encourages metacognitive reflection before analysis, creates
+task-specific verification strategies, and breaks complex detection tasks into manageable sub-components. For example
+in 1, when analyzing a potential contradiction between two
+statements, the plan might involve identifying key entities,
+
+Task Type
+Task Routing Prompt
+Question Answering
+You are provided with a question and its corresponding answer. Your task is to determine whether the answer contains hallucinated content.
+Dialogue Systems
+You are provided with a dialogue history and its corresponding response. Your task is
+to determine whether the response contains hallucinated content.
+Summarization
+You are provided with a document and its corresponding summary. Your task is to
+determine whether the summary contains hallucinated content.
+Math Word Problems
+You are provided with a math word problem. Your task is to determine whether the
+problem is unanswerable.
+Self-contradiction
+You are given two texts. Your task is to determine whether the information in the two
+texts is contradictory.
+Table 1: Task-oriented routing prompts for different NLP applications. These concise instructions guide the model to understand
+the specific hallucination detection objective for each task type.
+extracting their relationships, and systematically comparing
+these elements.
+Step 2: Plan-guided Reasoning In the second step, the
+model implements the verification plan developed in Step 1:
+[INPUT] Task Input
+[PLAN] Result from Step-1
+Let’s carry out the plan and solve the task step by step.
+Show the reasoning process.
+During reasoning, the model systematically applies each
+verification step defined in the plan to validate the input content. The structured nature of this process ensures comprehensive and consistent examination, minimizing the risk of
+overlooking subtle inconsistencies. Furthermore, by following an explicit plan, the model generates transparent and interpretable reasoning traces that not only support the final
+judgment but also facilitate human verification and analysis.
+Step 3: Final Judgment This step synthesizes the detailed analysis into a conclusive judgment:
+[INPUT] Task Input
+[ANALYSIS] Result from Step-2
+Please conclude whether the [INPUT] contains hallucinated content with Yes or No.
+This step produces a binary judgment indicating whether
+hallucinations are present. If hallucinations are detected, the
+input proceeds to the subsequent revision phase for correction.
+Step 4: Content Refinement The final step corrects the
+response based on the hallucination identification analysis:
+[INPUT] Task Input
+[ANALYSIS] Result from Step-2
+Given the analysis explaining why [INPUT] contains
+hallucinated content. Generate a revised version without hallucinations.
+This step refines the original response by leveraging the
+reasoning behind hallucination identification, aiming to produce a factually consistent revision.
+Our structural reasoning approach offers several key advantages. It reduces the risk of oversight through step-bystep analysis, provides transparent reasoning traces for interpretability, adapts verification strategies to specific tasks
+via task-oriented planning, and guides targeted revisions by
+identifying what to fix and why. All of this is achieved in a
+single execution.
+Our experimental results demonstrate that this structural
+reasoning framework consistently outperforms direct classification and prior baselines across diverse hallucination detection tasks.
+Experiments
+Experimental settings
+We conduct experiments using
+five popular instruction-tuned LLMs: (1) GPT-3.5 (gpt3.5-turbo-0125), (2) GPT-4o-mini, (3) LLaMA-3.1-70BInstruct (Dubey et al. 2024), (4) DeepSeek-V3 (Liu et al.
+2024), and (5) DeepSeek-R1. For GPT-series and DeepSeek
+models, we interact via API using default temperature settings. For Llama-3-70B, we use the BitsAndBytes library to
+run the model in 4-bit, following the official configuration
+recommended by the Meta Llama repository. All models are
+implemented in PyTorch 2.5.1 with CUDA 12.4 and executed on an NVIDIA A100-SXM4-80GB GPU.
+Dataset
+We collect evaluation data from four established
+hallucination detection benchmarks: 1. HaluEval (Li et al.
+2023a): Covers hallucinated samples across three task
+types—question answering, knowledge-grounded dialogue,
+and text summarization. 2. UMWP (Sun et al.): Evaluates
+hallucination in math word problems (MWPs) by identifying questions with no or non-unique solutions. Such unanswerable questions are known to induce hallucinations in
+LLMs and are often used to test whether models can recognize ill-posed or unsolvable problems—similar to how educators gauge student understanding with trick questions.
+3. ChatProtect (M¨
+undler et al. 2023):Focuses on selfcontradictory hallucinations, where a language model produces logically inconsistent statements within the same context. 4.HaluBench (Ravi et al. 2024):A domain-specific
+benchmark composed of hallucinated QA examples in the
+medical and financial domains, sourced from CovidQA,
+PubMedQA, and FinanceBench.
+
+Method
+QA
+DA
+SUM
+MWPs
+SC
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+LLM-Direct Judgment
+GPT-3.5-turbo
+33.5%
+59.3%
+62.8%
+66.0%
+24.7%
+55.8%
+50.9%
+59.5%
+46.0%
+64.0%
+GPT-4o-mini
+52.7%
+64.5%
+76.5%
+74.0%
+45.5%
+64.0%
+61.7%
+70.5%
+84.2%
+72.7%
+Llama-3-70B
+44.7%
+62.3%
+66.4%
+62.3%
+32.4%
+59.3%
+83.4%
+83.5%
+65.8%
+73.6%
+DeepSeek-V3
+62.2%
+70.3%
+75.4%
+71.8%
+55.0%
+66.5%
+55.6%
+68.0%
+52.0%
+67.3%
+DeepSeek-R1
+67.6%
+70.3%
+71.0%
+69.8%
+49.3%
+62.5%
+65.2%
+72.0%
+40.0%
+62.0%
+Existing Baselines (GPT-3.5-turbo)
+Step-by-Step
+22.0%
+54.0%
+61.4%
+65.8%
+22.1%
+54.3%
+55.7%
+65.0%
+68.1%
+75.0%
+SelfCheckGPT
+43.3%
+43.8%
+19.9%
+27.8%
+53.1%
+37.3%
+25.8%
+54.0%
+5.7%
+12.0%
+Plan-and-Solve
+32.0%
+56.5%
+19.3%
+52.0%
+6.7%
+51.3%
+66.9%
+73.8%
+66.4%
+73.0%
+ChatProtect
+51.4%
+64.0%
+72.0%
+69.3%
+36.7%
+60.3%
+74.0%
+71.8%
+83.8%
+84.7%
+Ours-GPT-3.5-turbo
+67.8%
+66.5%
+74.3%
+69.3%
+65.9%
+69.2%
+80.3%
+81.5%
+87.0%
+87.0%
+Ours-Llama-3-70B
+70.6%
+69.0%
+74.0%
+68.8%
+46.5%
+61.5%
+85.6%
+86.0%
+80.8%
+83.3%
+Ours-Deepseek-V3
+71.5%
+70.5%
+77.1%
+72.5%
+62.9%
+67.5%
+89.1%
+89.5%
+76.1%
+80.3%
+Table 2: Comparison of hallucination detection performance between our method, existing methods under a unified GPT-3.5turbo backbone, and direct classification baselines across various LLMs. Best results are highlighted in bold.
+Method
+QA
+DA
+SUM
+MWPs
+SC
+R
+Q
+R
+Q
+R
+Q
+R
+Q
+R
+Q
+GPT-3.5-turbo
+20.5%
+18.0%
+57.5%
+57.5%
+14.5%
+14.5%
+42.0%
+13.0%
+30.7%
+30.7%
+GPT-4o-mini
+39.5%
+36.5%
+84.5%
+84.0%
+30.0%
+30.0%
+47.5%
+14.0%
+72.7%
+72.7%
+Llama-3-70B
+30.5%
+27.5%
+74.5%
+74.5%
+19.5%
+19.5%
+83.0%
+32.5%
+49.3%
+49.3%
+DeepSeek-V3
+49.0%
+43.5%
+86.5%
+86.5%
+41.0%
+41.0%
+40.0%
+17.0%
+35.3%
+35.3%
+DeepSeek-R1
+62.0%
+56.5%
+74.0%
+73.5%
+36.5%
+36.5%
+42.0%
+28.0%
+25.3%
+25.3%
+Ours-Deepseek-V3
+74.0%
+64.5%
+92.5%
+92.5%
+55.0%
+55.0%
+75.5%
+41.0%
+87.3%
+62.7%
+Table 3: The effectiveness of the Framework HalluClean: R denotes the hallucination reduction rate after applying the revision
+module, and Q denotes the revision success rate, which reflects the quality of corrections.
+We demonstrate the effectiveness of HalluClean by evaluating it across multiple hallucination-prone NLP tasks
+in zero-shot setting, including: Question Answering (QA),
+Dialogue (DA), Summarization(SUM), Math Word Problems(MWPs) and Self-contradictory Hallucinations(SC).
+Evaluation Metrics
+We evaluate the effectiveness of the
+framework using three primary metrics: the hallucination reduction rate (comparing hallucinations before and after revision), revision success rate (measured by BertScore (Zhang
+et al. 2019) against reference outputs)), and detection effectiveness (measured by F1 score and accuracy in binary hallucination classification).
+• Hallucination Reduction Rate: To measure the effectiveness of the revision step, we compute the hallucination reduction rate by comparing the number of hallucinations detected before and after revision. Specifically,
+we first identify hallucinations in the original outputs,
+then re-evaluate the revised outputs using GPT-4o-mini.
+• Revision Success Rate: To assess revision quality, we
+compute BERTScore between each revised output and
+its gold reference. A revision is considered acceptable if
+the BERTScore exceeds 0.80(chosen to balance strict semantic fidelity and flexibility in surface expression). The
+revision success rate is the proportion of acceptable revisions among all hallucinations identified before revision.
+For multi-word problems (MWPs), revision quality evaluation is performed based on unanswerable reason categories, using exact match between predicted and gold
+labels.
+• Hallucination Detection: Since hallucination detection
+is formulated as a binary classification task, we evaluate
+its effectiveness using two standard metrics: F1 score and
+accuracy. Accuracy is reliable for overall performance,
+while F1 provides additional insight into the model’s balance between precision and recall.
+Results and Analysis
+Hallucination Detection Performance
+Table 2 presents a
+comprehensive comparison of hallucination detection performance across five tasks: QA, DA, SUM, MWPs, and SC.
+
+Model
+QA
+DA
+SUM
+MWPs
+SC
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+Direct Ask
+33.5%
+59.3%
+62.8%
+66.0%
+24.7%
+55.8%
+50.9%
+59.5%
+46.0%
+64.0%
++Task-oriented Routing
+39.3%
+59.0%
+69.8%
+67.8%
+60.0%
+65.3%
+50.3%
+59.5%
+82.5%
+83.3%
++Structural Reasoning
+67.8%
+66.5%
+74.3%
+69.3%
+65.9%
+69.2%
+80.3%
+81.5%
+87.0%
+87.0%
+Table 4: Ablation study of the HalluClean framework. We evaluate the impact of removing the task-oriented routing and
+structural-reasoning mechanism.
+Model
+CovidQA
+PubmedQA
+FinanceBench
+Overall
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+GPT-3.5-turbo
+9.5%
+52.5%
+7.7%
+52.0%
+11.0%
+51.5%
+9.4%
+52.0%
+GPT-4o-mini
+53.2%
+67.5%
+68.7%
+74.5%
+19.4%
+50.0%
+47.1%
+64.0%
+Llama-3-70B
+7.7%
+52.0%
+16.5%
+54.5%
+7.4%
+50.0%
+10.5%
+52.2%
+DeepSeek-V3
+81.6%
+84.0%
+71.0%
+77.5%
+21.1%
+55.0%
+57.9%
+72.2%
+DeepSeek-R1
+68.4%
+75.5%
+76.4%
+79.0%
+47.9%
+63.0%
+64.2%
+72.5%
+Ours-GPT-3.5-turbo
+91.7%
+92.0%
+81.7%
+81.0%
+73.4%
+76.5%
+82.3%
+83.2%
+Table 5: The effectiveness of the detection in real world specific-domain.
+Our method consistently outperforms both direct LLM judgment and existing baselines under a unified GPT-3.5-turbo
+backbone.
+When using a stronger backbone such as DeepSeek-V3,
+our method achieves further performance gains. Specifically, Ours-DeepSeek-V3 attains the highest F1 scores on
+QA, DA, and MWPs, and achieves the highest accuracy
+across all five tasks. Moreover, the competitive performance of Ours-Llama-3-70B highlights the practicality of
+our method when deployed with open-source backbones,
+offering a compelling solution for resource-constrained or
+privacy-sensitive applications.
+Hallucination Revision Performance
+We evaluate the effectiveness of our HalluClean framework in mitigating hallucinations by comparing performance before and after its
+application. As baselines, we use several mainstream LLMs
+that directly detect hallucinations and generate revised outputs if needed. Table 3 shows the performance of HalluClean
+in reducing hallucinations across five tasks. Our method
+achieves the highest reduction rate (R) and revision quality (Q) on most tasks. While Llama-3-70B performs well on
+MWPs in terms of reduction rate, its correction quality is
+comparatively low. Overall, HalluClean delivers more consistent and effective correction across all evaluated scenarios.
+We perform an ablation study of the HalluClean framework to evaluate the impact of HalluClean’s task-oriented
+routing and structural-reasoning mechanism in HalluClean.
+As shown in Table 4, each module individually contributes
+to performance improvement, confirming their complementary roles in the framework.
+Table 4 presents the ablation results of the HalluClean
+framework, illustrating the impact of its two core components: Task-Oriented Routing and Structural-reasoning
+mechanism. Starting from a Direct Ask baseline, we incrementally add these modules and observe consistent performance improvements across all five tasks. Overall, both
+modules contribute complementary benefits.
+Domain-Specific Evaluation in Real-World Applications
+We further evaluate the effectiveness of our method in
+domain-specific hallucination detection, focusing on the
+medical and financial fields. As shown in Table 5 Across
+all three domain-specific datasets, our method consistently
+achieves the highest F1 score and accuracy, demonstrating
+its robustness and effectiveness in hallucination detection
+within specialized fields.
+Integration with Retrieval-Augmented Generation
+To
+evaluate whether our method complements external knowledge, we test hallucination detection on the QA task from
+HalEval (Li et al. 2023a) under two settings: vanilla (no
+external knowledge) and retrieval-augmented (with background knowledge).
+Method
+Vanilla
+Retrieval Aug.
+F1
+Acc.
+F1
+Acc.
+GPT-3.5-turbo
+33.5%
+59.3%
+56.2%
+65.3%
++Ours
+67.8%
+66.5%
+80.4%
+82.3%
+Table
+6:
+Evaluation
+of
+Detection
+Performance
+with
+Retrieval-Augmented Strategy
+As shown in Table 6, our method significantly outperforms direct judgment by GPT-3.5-turbo in both the vanilla
+and retrieval-augmented settings. Notably, when augmented
+with retrieval, our approach achieves substantial gains in
+both F1 (80.4%) and accuracy (82.3%), demonstrating its
+
+Figure 2: Detection adaptability across backbone LLMs. F1 and Acc denote the F1 score and accuracy of hallucination detection, respectively.
+Figure 3: Revision module adaptability across backbone LLMs. R represents hallucination reduction rate, and Q reprensents
+revision success rate.
+strong ability to leverage external information for more accurate hallucination detection.
+Cross-Lingual Transferability
+To evaluate cross-lingual
+generalization, we test our method on two Chinese hallucination detection benchmarks: HalluQA and CMHE-HD,
+each with 200 samples (100 hallucinated, 100 faithful), using GPT-3.5-turbo as the backbone. As shown in Table 7,
+our method outperforms the GPT-3.5-turbo baseline on both
+datasets, demonstrating strong cross-lingual adaptability.
+Method
+HalluQA
+CMHE-HD
+F1
+Acc.
+F1
+Acc.
+GPT3.5-turbo
+7.0%
+46.5%
+21.9%
+50.0%
++Ours
+41.6%
+55.0%
+57.3%
+51.5%
+Table 7: Evaluation of Detection Performance under CrossLingual Settings
+Module-Level Adaptability Across Backbone LLMs
+To
+evaluate the generalization ability of our framework, we assess the adaptability of Detection Module and Revision
+Module across five tasks using different backbone LLMs.
+Figures 2 and 3 evaluate the adaptability of our hallucination detection and revision modules across multiple backbone LLMs and task types.
+Our detection module consistently improves F1 and accuracy across all evaluated tasks and backbone models.
+The performance gain is especially notable in QA and SC
+tasks, demonstrating strong adaptability to diverse reasoning
+types. Notably, GPT-3.5-turbo exhibit the most significant
+gains (e.g., over 41% F1 improvement on summarization
+and self-contradiction detection, and over 30% on QA and
+MWPs.). The revision module mitigates performance disparities across tasks, enabling each model to achieve more
+balanced and consistent results.
+These findings underscore the robustness and cross-task
+generalization of our detection and revision modules in
+hallucination identification, consistently performing well
+across different task types and model architectures.
+Conclusion
+We presented HalluClean, a lightweight and generalizable
+framework for detecting and correcting hallucinations in
+language model outputs. In contrast to prior approaches that
+rely on extensive fine-tuning or external knowledge sources,
+HalluClean operates in a zero-shot setting through structured
+reasoning. It achieves strong performance across a wide
+range of hallucination-prone tasks—including question answering, summarization, dialogue, mathematical reasoning,
+and self-contradiction detection—without task-specific su-
+
+pervision. Moreover, HalluClean supports local deployment
+with open-source LLMs, making it particularly suitable for
+privacy-sensitive or resource-constrained scenarios. These
+attributes establish HalluClean as a practical, interpretable,
+and broadly applicable solution for enhancing the factual
+consistency and trustworthiness of LLM-generated content.
+References
+Achiam, J.; Adler, S.; Agarwal, S.; Ahmad, L.; Akkaya, I.;
+Aleman, F. L.; Almeida, D.; Altenschmidt, J.; Altman, S.;
+Anadkat, S.; et al. 2023.
+Gpt-4 technical report.
+arXiv
+preprint arXiv:2303.08774.
+Bang, Y.; Cahyawijaya, S.; Lee, N.; Dai, W.; Su, D.; Wilie,
+B.; Lovenia, H.; Ji, Z.; Yu, T.; Chung, W.; et al. 2023. A
+multitask, multilingual, multimodal evaluation of chatgpt on
+reasoning, hallucination, and interactivity.
+arXiv preprint
+arXiv:2302.04023.
+Cao, H.; An, Z.; Feng, J.; Xu, K.; Chen, L.; and Zhao, D.
+2023.
+A Step Closer to Comprehensive Answers: Constrained Multi-Stage Question Decomposition with Large
+Language Models. arXiv preprint arXiv:2311.07491.
+Cao, M.; Dong, Y.; and Cheung, J. C. K. 2022. Hallucinated
+but Factual! Inspecting the Factuality of Hallucinations in
+Abstractive Summarization. In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), 3340–3354.
+Chen, C.; and Shu, K. 2024. Combating misinformation in
+the age of llms: Opportunities and challenges. AI Magazine,
+45(3): 354–368.
+Chowdhery, A.; Narang, S.; Devlin, J.; Bosma, M.; Mishra,
+G.; Roberts, A.; Barham, P.; Chung, H. W.; Sutton, C.;
+Gehrmann, S.; et al. 2023. Palm: Scaling language modeling with pathways. Journal of Machine Learning Research,
+24(240): 1–113.
+Chung, H. W.; Hou, L.; Longpre, S.; Zoph, B.; Tay, Y.; Fedus, W.; Li, Y.; Wang, X.; Dehghani, M.; Brahma, S.; et al.
+2024. Scaling instruction-finetuned language models. Journal of Machine Learning Research, 25(70): 1–53.
+Das, S.; Saha, S.; and Srihari, R. K. 2022.
+Diving Deep
+into Modes of Fact Hallucinations in Dialogue Systems. In
+Findings of the Association for Computational Linguistics:
+EMNLP 2022, 684–699.
+Dong, Q.; Xu, J.; Kong, L.; Sui, Z.; and Li, L. 2024. Statistical knowledge assessment for large language models. Advances in Neural Information Processing Systems, 36.
+Dua, D.; Gupta, S.; Singh, S.; and Gardner, M. 2022.
+Successive prompting for decomposing complex questions.
+arXiv preprint arXiv:2212.04092.
+Dubey, A.; Jauhri, A.; Pandey, A.; Kadian, A.; Al-Dahle, A.;
+Letman, A.; Mathur, A.; Schelten, A.; Yang, A.; Fan, A.;
+et al. 2024. The llama 3 herd of models. arXiv preprint
+arXiv:2407.21783.
+Elaraby, M.; Lu, M.; Dunn, J.; Zhang, X.; Wang, Y.; Liu, S.;
+Tian, P.; Wang, Y.; and Wang, Y. 2023. Halo: Estimation
+and reduction of hallucinations in open-source weak large
+language models. arXiv preprint arXiv:2308.11764.
+Fu, Y.; Peng, H.; Sabharwal, A.; Clark, P.; and Khot, T. 2022.
+Complexity-based prompting for multi-step reasoning. In
+The Eleventh International Conference on Learning Representations.
+Huang, L.; Yu, W.; Ma, W.; Zhong, W.; Feng, Z.; Wang, H.;
+Chen, Q.; Peng, W.; Feng, X.; Qin, B.; et al. 2023. A survey
+on hallucination in large language models: Principles, taxonomy, challenges, and open questions. ACM Transactions
+on Information Systems.
+Huang, W.; Abbeel, P.; Pathak, D.; and Mordatch, I. 2022.
+Language models as zero-shot planners: Extracting actionable knowledge for embodied agents. In International conference on machine learning, 9118–9147. PMLR.
+Ji, Z.; Lee, N.; Frieske, R.; Yu, T.; Su, D.; Xu, Y.; Ishii, E.;
+Bang, Y. J.; Madotto, A.; and Fung, P. 2023. Survey of hallucination in natural language generation. ACM Computing
+Surveys, 55(12): 1–38.
+Kahneman, D. 2011. Thinking, fast and slow. macmillan.
+Kang, H.; Ni, J.; and Yao, H. 2023. Ever: Mitigating hallucination in large language models through real-time verification and rectification. arXiv preprint arXiv:2311.09114.
+Kasai, J.; Sakaguchi, K.; Le Bras, R.; Asai, A.; Yu, X.;
+Radev, D.; Smith, N. A.; Choi, Y.; Inui, K.; et al. 2024. REALTIME QA: what’s the answer right now? Advances in
+Neural Information Processing Systems, 36.
+Khot, T.; Trivedi, H.; Finlayson, M.; Fu, Y.; Richardson, K.;
+Clark, P.; and Sabharwal, A. 2022. Decomposed prompting: A modular approach for solving complex tasks. arXiv
+preprint arXiv:2210.02406.
+Kojima, T.; Gu, S. S.; Reid, M.; Matsuo, Y.; and Iwasawa,
+Y. 2022.
+Large language models are zero-shot reasoners. Advances in neural information processing systems, 35:
+22199–22213.
+Lee, N.; Ping, W.; Xu, P.; Patwary, M.; Fung, P. N.; Shoeybi,
+M.; and Catanzaro, B. 2022. Factuality enhanced language
+models for open-ended text generation. Advances in Neural
+Information Processing Systems, 35: 34586–34599.
+Li, J.; Cheng, X.; Zhao, W. X.; Nie, J.-Y.; and Wen, J.-R.
+2023a. HaluEval: A Large-Scale Hallucination Evaluation
+Benchmark for Large Language Models. In Proceedings of
+the 2023 Conference on Empirical Methods in Natural Language Processing, 6449–6464.
+Li, X. L.; Shrivastava, V.; Li, S.; Hashimoto, T.; and
+Liang, P. 2023b. Benchmarking and improving generatorvalidator consistency of language models. arXiv preprint
+arXiv:2310.01846.
+Li, Y.; Lin, Z.; Zhang, S.; Fu, Q.; Chen, B.; Lou, J.-G.; and
+Chen, W. 2022. On the advance of making language models
+better reasoners. arXiv preprint arXiv:2206.02336.
+Lin, S.; Hilton, J.; and Evans, O. 2021. Truthfulqa: Measuring how models mimic human falsehoods. arXiv preprint
+arXiv:2109.07958.
+Liu, A.; Feng, B.; Xue, B.; Wang, B.; Wu, B.; Lu, C.; Zhao,
+C.; Deng, C.; Zhang, C.; Ruan, C.; et al. 2024. Deepseek-v3
+technical report. arXiv preprint arXiv:2412.19437.
+
+Liu, B.; Jiang, Y.; Zhang, X.; Liu, Q.; Zhang, S.; Biswas, J.;
+and Stone, P. 2023. Llm+ p: Empowering large language
+models with optimal planning proficiency. arXiv preprint
+arXiv:2304.11477.
+Min, S.; Krishna, K.; Lyu, X.; Lewis, M.; Yih, W.-t.;
+Koh, P. W.; Iyyer, M.; Zettlemoyer, L.; and Hajishirzi, H.
+2023.
+Factscore: Fine-grained atomic evaluation of factual precision in long form text generation. arXiv preprint
+arXiv:2305.14251.
+Mitchell, E.; Noh, J. J.; Li, S.; Armstrong, W. S.; Agarwal,
+A.; Liu, P.; Finn, C.; and Manning, C. D. 2022. Enhancing
+self-consistency and performance of pre-trained language
+models through natural language inference. arXiv preprint
+arXiv:2211.11875.
+M¨
+undler, N.; He, J.; Jenko, S.; and Vechev, M. 2023.
+Self-contradictory hallucinations of large language models: Evaluation, detection and mitigation.
+arXiv preprint
+arXiv:2305.15852.
+Ouyang, L.; Wu, J.; Jiang, X.; Almeida, D.; Wainwright, C.;
+Mishkin, P.; Zhang, C.; Agarwal, S.; Slama, K.; Ray, A.;
+et al. 2022. Training language models to follow instructions
+with human feedback. Advances in neural information processing systems, 35: 27730–27744.
+Pan, Y.; Pan, L.; Chen, W.; Nakov, P.; Kan, M.-Y.; and Wang,
+W. Y. 2023. On the risk of misinformation pollution with
+large language models. arXiv preprint arXiv:2305.13661.
+Peng, B.; Galley, M.; He, P.; Cheng, H.; Xie, Y.; Hu, Y.;
+Huang, Q.; Liden, L.; Yu, Z.; Chen, W.; et al. 2023. Check
+your facts and try again: Improving large language models
+with external knowledge and automated feedback.
+arXiv
+preprint arXiv:2302.12813.
+Qin, C.; Zhang, A.; Zhang, Z.; Chen, J.; Yasunaga, M.;
+and Yang, D. 2023.
+Is ChatGPT a general-purpose natural language processing task solver?
+arXiv preprint
+arXiv:2302.06476.
+Qiu, Y.; Embar, V.; Cohen, S. B.; and Han, B. 2023.
+Think while you write: Hypothesis verification promotes
+faithful knowledge-to-text generation.
+arXiv preprint
+arXiv:2311.09467.
+Ravi, S. S.; Mielczarek, B.; Kannappan, A.; Kiela, D.; and
+Qian, R. 2024. Lynx: An open source hallucination evaluation model. arXiv preprint arXiv:2407.08488.
+Rawte, V.; Chakraborty, S.; Pathak, A.; Sarkar, A.; Tonmoy,
+S.; Chadha, A.; Sheth, A. P.; and Das, A. 2023. The troubling
+emergence of hallucination in large language models–an extensive definition, quantification, and prescriptive remediations. arXiv preprint arXiv:2310.04988.
+Razumovskaia, E.; Vuli´
+c, I.; Markovi´
+c, P.; Cichy, T.; Zheng,
+Q.; Wen, T.-H.; and Budzianowski, P. 2024. Dial beinfo for
+faithfulness: Improving factuality of information-seeking dialogue via behavioural fine-tuning.
+In Findings of the
+Association for Computational Linguistics: EMNLP 2024,
+17139–17152.
+Si, C.; Gan, Z.; Yang, Z.; Wang, S.; Wang, J.; Boyd-Graber,
+J.; and Wang, L. 2022. Prompting gpt-3 to be reliable. arXiv
+preprint arXiv:2210.09150.
+Sun, S.; Liu, Y.; Wang, S.; Zhu, C.; and Iyyer, M.
+2023.
+Pearl: Prompting large language models to plan
+and execute actions over long documents. arXiv preprint
+arXiv:2305.14564.
+Sun, Y.; Yin, Z.; Guo, Q.; Wu, J.; Qiu, X.; and Zhao, H.
+???? Benchmarking Hallucination in Large Language Models based on Unanswerable Math Word Problem.
+Touvron, H.; Martin, L.; Stone, K.; Albert, P.; Almahairi, A.;
+Babaei, Y.; Bashlykov, N.; Batra, S.; Bhargava, P.; Bhosale,
+S.; et al. 2023. Llama 2: Open foundation and fine-tuned
+chat models. arXiv preprint arXiv:2307.09288.
+Varshney, N.; Yao, W.; Zhang, H.; Chen, J.; and Yu, D. 2023.
+A stitch in time saves nine: Detecting and mitigating hallucinations of llms by validating low-confidence generation.
+arXiv preprint arXiv:2307.03987.
+Wang, F.; Mo, W.; Wang, Y.; Zhou, W.; and Chen, M. 2023a.
+A causal view of entity bias in (large) language models.
+arXiv preprint arXiv:2305.14695.
+Wang, Y.; Kordi, Y.; Mishra, S.; Liu, A.; Smith, N. A.;
+Khashabi, D.; and Hajishirzi, H. 2022a. Self-instruct: Aligning language models with self-generated instructions. arXiv
+preprint arXiv:2212.10560.
+Wang, Y.; Mishra, S.; Alipoormolabashi, P.; Kordi, Y.;
+Mirzaei, A.; Arunkumar, A.; Ashok, A.; Dhanasekaran,
+A. S.; Naik, A.; Stap, D.; et al. 2022b.
+Supernaturalinstructions: Generalization via declarative instructions on 1600+ nlp tasks. arXiv preprint arXiv:2204.07705.
+Wang, Z.; Cai, S.; Chen, G.; Liu, A.; Ma, X.; and Liang, Y.
+2023b. Describe, explain, plan and select: Interactive planning with large language models enables open-world multitask agents. arXiv preprint arXiv:2302.01560.
+Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Xia, F.;
+Chi, E.; Le, Q. V.; Zhou, D.; et al. 2022.
+Chain-ofthought prompting elicits reasoning in large language models. Advances in neural information processing systems, 35:
+24824–24837.
+Weng, Y.; Zhu, M.; He, S.; Liu, K.; and Zhao, J. 2022. Large
+language models are reasoners with self-verification. arXiv
+preprint arXiv:2212.09561, 2.
+Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan,
+K.; and Cao, Y. 2022. React: Synergizing reasoning and acting in language models. arXiv preprint arXiv:2210.03629.
+Yao, Y.; Wang, P.; Tian, B.; Cheng, S.; Li, Z.; Deng, S.;
+Chen, H.; and Zhang, N. 2023. Editing large language models: Problems, methods, and opportunities. arXiv preprint
+arXiv:2305.13172.
+Zhang, H.; Diao, S.; Lin, Y.; Fung, Y. R.; Lian, Q.; Wang,
+X.; Chen, Y.; Ji, H.; and Zhang, T. 2023. R-tuning: Teaching
+large language models to refuse unknown questions. arXiv
+preprint arXiv:2311.09677.
+Zhang, T.; Kishore, V.; Wu, F.; Weinberger, K. Q.; and Artzi,
+Y. 2019.
+BERTScore: Evaluating Text Generation with
+BERT. CoRR, abs/1904.09675.
+Zhao, Y.; Yan, L.; Sun, W.; Xing, G.; Meng, C.; Wang, S.;
+Cheng, Z.; Ren, Z.; and Yin, D. 2023. Knowing what llms
+do not know: A simple yet effective self-detection method.
+arXiv preprint arXiv:2310.17918.
+
+Zheng, S.; Huang, J.; and Chang, K. C.-C. 2023.
+Why
+Does ChatGPT Fall Short in Providing Truthful Answers?
+arXiv:2304.10513.
+Zhou, D.; Sch¨
+arli, N.; Hou, L.; Wei, J.; Scales, N.; Wang,
+X.; Schuurmans, D.; Cui, C.; Bousquet, O.; Le, Q.; et al.
+2022. Least-to-most prompting enables complex reasoning
+in large language models. arXiv preprint arXiv:2205.10625.
+References
+Achiam, J.; Adler, S.; Agarwal, S.; Ahmad, L.; Akkaya, I.;
+Aleman, F. L.; Almeida, D.; Altenschmidt, J.; Altman, S.;
+Anadkat, S.; et al. 2023.
+Gpt-4 technical report.
+arXiv
+preprint arXiv:2303.08774.
+Bang, Y.; Cahyawijaya, S.; Lee, N.; Dai, W.; Su, D.; Wilie,
+B.; Lovenia, H.; Ji, Z.; Yu, T.; Chung, W.; et al. 2023. A
+multitask, multilingual, multimodal evaluation of chatgpt on
+reasoning, hallucination, and interactivity.
+arXiv preprint
+arXiv:2302.04023.
+Cao, H.; An, Z.; Feng, J.; Xu, K.; Chen, L.; and Zhao, D.
+2023.
+A Step Closer to Comprehensive Answers: Constrained Multi-Stage Question Decomposition with Large
+Language Models. arXiv preprint arXiv:2311.07491.
+Cao, M.; Dong, Y.; and Cheung, J. C. K. 2022. Hallucinated
+but Factual! Inspecting the Factuality of Hallucinations in
+Abstractive Summarization. In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), 3340–3354.
+Chen, C.; and Shu, K. 2024. Combating misinformation in
+the age of llms: Opportunities and challenges. AI Magazine,
+45(3): 354–368.
+Chowdhery, A.; Narang, S.; Devlin, J.; Bosma, M.; Mishra,
+G.; Roberts, A.; Barham, P.; Chung, H. W.; Sutton, C.;
+Gehrmann, S.; et al. 2023. Palm: Scaling language modeling with pathways. Journal of Machine Learning Research,
+24(240): 1–113.
+Chung, H. W.; Hou, L.; Longpre, S.; Zoph, B.; Tay, Y.; Fedus, W.; Li, Y.; Wang, X.; Dehghani, M.; Brahma, S.; et al.
+2024. Scaling instruction-finetuned language models. Journal of Machine Learning Research, 25(70): 1–53.
+Das, S.; Saha, S.; and Srihari, R. K. 2022.
+Diving Deep
+into Modes of Fact Hallucinations in Dialogue Systems. In
+Findings of the Association for Computational Linguistics:
+EMNLP 2022, 684–699.
+Dong, Q.; Xu, J.; Kong, L.; Sui, Z.; and Li, L. 2024. Statistical knowledge assessment for large language models. Advances in Neural Information Processing Systems, 36.
+Dua, D.; Gupta, S.; Singh, S.; and Gardner, M. 2022.
+Successive prompting for decomposing complex questions.
+arXiv preprint arXiv:2212.04092.
+Dubey, A.; Jauhri, A.; Pandey, A.; Kadian, A.; Al-Dahle, A.;
+Letman, A.; Mathur, A.; Schelten, A.; Yang, A.; Fan, A.;
+et al. 2024. The llama 3 herd of models. arXiv preprint
+arXiv:2407.21783.
+Elaraby, M.; Lu, M.; Dunn, J.; Zhang, X.; Wang, Y.; Liu, S.;
+Tian, P.; Wang, Y.; and Wang, Y. 2023. Halo: Estimation
+and reduction of hallucinations in open-source weak large
+language models. arXiv preprint arXiv:2308.11764.
+Fu, Y.; Peng, H.; Sabharwal, A.; Clark, P.; and Khot, T. 2022.
+Complexity-based prompting for multi-step reasoning. In
+The Eleventh International Conference on Learning Representations.
+Huang, L.; Yu, W.; Ma, W.; Zhong, W.; Feng, Z.; Wang, H.;
+Chen, Q.; Peng, W.; Feng, X.; Qin, B.; et al. 2023. A survey
+on hallucination in large language models: Principles, taxonomy, challenges, and open questions. ACM Transactions
+on Information Systems.
+Huang, W.; Abbeel, P.; Pathak, D.; and Mordatch, I. 2022.
+Language models as zero-shot planners: Extracting actionable knowledge for embodied agents. In International conference on machine learning, 9118–9147. PMLR.
+Ji, Z.; Lee, N.; Frieske, R.; Yu, T.; Su, D.; Xu, Y.; Ishii, E.;
+Bang, Y. J.; Madotto, A.; and Fung, P. 2023. Survey of hallucination in natural language generation. ACM Computing
+Surveys, 55(12): 1–38.
+Kahneman, D. 2011. Thinking, fast and slow. macmillan.
+Kang, H.; Ni, J.; and Yao, H. 2023. Ever: Mitigating hallucination in large language models through real-time verification and rectification. arXiv preprint arXiv:2311.09114.
+Kasai, J.; Sakaguchi, K.; Le Bras, R.; Asai, A.; Yu, X.;
+Radev, D.; Smith, N. A.; Choi, Y.; Inui, K.; et al. 2024. REALTIME QA: what’s the answer right now? Advances in
+Neural Information Processing Systems, 36.
+Khot, T.; Trivedi, H.; Finlayson, M.; Fu, Y.; Richardson, K.;
+Clark, P.; and Sabharwal, A. 2022. Decomposed prompting: A modular approach for solving complex tasks. arXiv
+preprint arXiv:2210.02406.
+Kojima, T.; Gu, S. S.; Reid, M.; Matsuo, Y.; and Iwasawa,
+Y. 2022.
+Large language models are zero-shot reasoners. Advances in neural information processing systems, 35:
+22199–22213.
+Lee, N.; Ping, W.; Xu, P.; Patwary, M.; Fung, P. N.; Shoeybi,
+M.; and Catanzaro, B. 2022. Factuality enhanced language
+models for open-ended text generation. Advances in Neural
+Information Processing Systems, 35: 34586–34599.
+Li, J.; Cheng, X.; Zhao, W. X.; Nie, J.-Y.; and Wen, J.-R.
+2023a. HaluEval: A Large-Scale Hallucination Evaluation
+Benchmark for Large Language Models. In Proceedings of
+the 2023 Conference on Empirical Methods in Natural Language Processing, 6449–6464.
+Li, X. L.; Shrivastava, V.; Li, S.; Hashimoto, T.; and
+Liang, P. 2023b. Benchmarking and improving generatorvalidator consistency of language models. arXiv preprint
+arXiv:2310.01846.
+Li, Y.; Lin, Z.; Zhang, S.; Fu, Q.; Chen, B.; Lou, J.-G.; and
+Chen, W. 2022. On the advance of making language models
+better reasoners. arXiv preprint arXiv:2206.02336.
+Lin, S.; Hilton, J.; and Evans, O. 2021. Truthfulqa: Measuring how models mimic human falsehoods. arXiv preprint
+arXiv:2109.07958.
+
+Liu, A.; Feng, B.; Xue, B.; Wang, B.; Wu, B.; Lu, C.; Zhao,
+C.; Deng, C.; Zhang, C.; Ruan, C.; et al. 2024. Deepseek-v3
+technical report. arXiv preprint arXiv:2412.19437.
+Liu, B.; Jiang, Y.; Zhang, X.; Liu, Q.; Zhang, S.; Biswas, J.;
+and Stone, P. 2023. Llm+ p: Empowering large language
+models with optimal planning proficiency. arXiv preprint
+arXiv:2304.11477.
+Min, S.; Krishna, K.; Lyu, X.; Lewis, M.; Yih, W.-t.;
+Koh, P. W.; Iyyer, M.; Zettlemoyer, L.; and Hajishirzi, H.
+2023.
+Factscore: Fine-grained atomic evaluation of factual precision in long form text generation. arXiv preprint
+arXiv:2305.14251.
+Mitchell, E.; Noh, J. J.; Li, S.; Armstrong, W. S.; Agarwal,
+A.; Liu, P.; Finn, C.; and Manning, C. D. 2022. Enhancing
+self-consistency and performance of pre-trained language
+models through natural language inference. arXiv preprint
+arXiv:2211.11875.
+M¨
+undler, N.; He, J.; Jenko, S.; and Vechev, M. 2023.
+Self-contradictory hallucinations of large language models: Evaluation, detection and mitigation.
+arXiv preprint
+arXiv:2305.15852.
+Ouyang, L.; Wu, J.; Jiang, X.; Almeida, D.; Wainwright, C.;
+Mishkin, P.; Zhang, C.; Agarwal, S.; Slama, K.; Ray, A.;
+et al. 2022. Training language models to follow instructions
+with human feedback. Advances in neural information processing systems, 35: 27730–27744.
+Pan, Y.; Pan, L.; Chen, W.; Nakov, P.; Kan, M.-Y.; and Wang,
+W. Y. 2023. On the risk of misinformation pollution with
+large language models. arXiv preprint arXiv:2305.13661.
+Peng, B.; Galley, M.; He, P.; Cheng, H.; Xie, Y.; Hu, Y.;
+Huang, Q.; Liden, L.; Yu, Z.; Chen, W.; et al. 2023. Check
+your facts and try again: Improving large language models
+with external knowledge and automated feedback.
+arXiv
+preprint arXiv:2302.12813.
+Qin, C.; Zhang, A.; Zhang, Z.; Chen, J.; Yasunaga, M.;
+and Yang, D. 2023.
+Is ChatGPT a general-purpose natural language processing task solver?
+arXiv preprint
+arXiv:2302.06476.
+Qiu, Y.; Embar, V.; Cohen, S. B.; and Han, B. 2023.
+Think while you write: Hypothesis verification promotes
+faithful knowledge-to-text generation.
+arXiv preprint
+arXiv:2311.09467.
+Ravi, S. S.; Mielczarek, B.; Kannappan, A.; Kiela, D.; and
+Qian, R. 2024. Lynx: An open source hallucination evaluation model. arXiv preprint arXiv:2407.08488.
+Rawte, V.; Chakraborty, S.; Pathak, A.; Sarkar, A.; Tonmoy,
+S.; Chadha, A.; Sheth, A. P.; and Das, A. 2023. The troubling
+emergence of hallucination in large language models–an extensive definition, quantification, and prescriptive remediations. arXiv preprint arXiv:2310.04988.
+Razumovskaia, E.; Vuli´
+c, I.; Markovi´
+c, P.; Cichy, T.; Zheng,
+Q.; Wen, T.-H.; and Budzianowski, P. 2024. Dial beinfo for
+faithfulness: Improving factuality of information-seeking dialogue via behavioural fine-tuning.
+In Findings of the
+Association for Computational Linguistics: EMNLP 2024,
+17139–17152.
+Si, C.; Gan, Z.; Yang, Z.; Wang, S.; Wang, J.; Boyd-Graber,
+J.; and Wang, L. 2022. Prompting gpt-3 to be reliable. arXiv
+preprint arXiv:2210.09150.
+Sun, S.; Liu, Y.; Wang, S.; Zhu, C.; and Iyyer, M.
+2023.
+Pearl: Prompting large language models to plan
+and execute actions over long documents. arXiv preprint
+arXiv:2305.14564.
+Sun, Y.; Yin, Z.; Guo, Q.; Wu, J.; Qiu, X.; and Zhao, H.
+???? Benchmarking Hallucination in Large Language Models based on Unanswerable Math Word Problem.
+Touvron, H.; Martin, L.; Stone, K.; Albert, P.; Almahairi, A.;
+Babaei, Y.; Bashlykov, N.; Batra, S.; Bhargava, P.; Bhosale,
+S.; et al. 2023. Llama 2: Open foundation and fine-tuned
+chat models. arXiv preprint arXiv:2307.09288.
+Varshney, N.; Yao, W.; Zhang, H.; Chen, J.; and Yu, D. 2023.
+A stitch in time saves nine: Detecting and mitigating hallucinations of llms by validating low-confidence generation.
+arXiv preprint arXiv:2307.03987.
+Wang, F.; Mo, W.; Wang, Y.; Zhou, W.; and Chen, M. 2023a.
+A causal view of entity bias in (large) language models.
+arXiv preprint arXiv:2305.14695.
+Wang, Y.; Kordi, Y.; Mishra, S.; Liu, A.; Smith, N. A.;
+Khashabi, D.; and Hajishirzi, H. 2022a. Self-instruct: Aligning language models with self-generated instructions. arXiv
+preprint arXiv:2212.10560.
+Wang, Y.; Mishra, S.; Alipoormolabashi, P.; Kordi, Y.;
+Mirzaei, A.; Arunkumar, A.; Ashok, A.; Dhanasekaran,
+A. S.; Naik, A.; Stap, D.; et al. 2022b.
+Supernaturalinstructions: Generalization via declarative instructions on 1600+ nlp tasks. arXiv preprint arXiv:2204.07705.
+Wang, Z.; Cai, S.; Chen, G.; Liu, A.; Ma, X.; and Liang, Y.
+2023b. Describe, explain, plan and select: Interactive planning with large language models enables open-world multitask agents. arXiv preprint arXiv:2302.01560.
+Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Xia, F.;
+Chi, E.; Le, Q. V.; Zhou, D.; et al. 2022.
+Chain-ofthought prompting elicits reasoning in large language models. Advances in neural information processing systems, 35:
+24824–24837.
+Weng, Y.; Zhu, M.; He, S.; Liu, K.; and Zhao, J. 2022. Large
+language models are reasoners with self-verification. arXiv
+preprint arXiv:2212.09561, 2.
+Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan,
+K.; and Cao, Y. 2022. React: Synergizing reasoning and acting in language models. arXiv preprint arXiv:2210.03629.
+Yao, Y.; Wang, P.; Tian, B.; Cheng, S.; Li, Z.; Deng, S.;
+Chen, H.; and Zhang, N. 2023. Editing large language models: Problems, methods, and opportunities. arXiv preprint
+arXiv:2305.13172.
+Zhang, H.; Diao, S.; Lin, Y.; Fung, Y. R.; Lian, Q.; Wang,
+X.; Chen, Y.; Ji, H.; and Zhang, T. 2023. R-tuning: Teaching
+large language models to refuse unknown questions. arXiv
+preprint arXiv:2311.09677.
+Zhang, T.; Kishore, V.; Wu, F.; Weinberger, K. Q.; and Artzi,
+Y. 2019.
+BERTScore: Evaluating Text Generation with
+BERT. CoRR, abs/1904.09675.
+
+Zhao, Y.; Yan, L.; Sun, W.; Xing, G.; Meng, C.; Wang, S.;
+Cheng, Z.; Ren, Z.; and Yin, D. 2023. Knowing what llms
+do not know: A simple yet effective self-detection method.
+arXiv preprint arXiv:2310.17918.
+Zheng, S.; Huang, J.; and Chang, K. C.-C. 2023.
+Why
+Does ChatGPT Fall Short in Providing Truthful Answers?
+arXiv:2304.10513.
+Zhou, D.; Sch¨
+arli, N.; Hou, L.; Wei, J.; Scales, N.; Wang,
+X.; Schuurmans, D.; Cui, C.; Bousquet, O.; Le, Q.; et al.
+2022. Least-to-most prompting enables complex reasoning
+in large language models. arXiv preprint arXiv:2205.10625.
+Limitations and Future Work
+While HalluClean exhibits strong zero-shot generalization
+across diverse tasks, several avenues remain for improvement. One current limitation lies in its reliance on the reasoning capabilities of the underlying language model. Although our approach performs robustly with state-of-the-art
+LLMs, its effectiveness may vary when deployed in lowresource environments or with smaller models. This reflects
+a broader challenge inherent to prompt-based systems rather
+than a flaw unique to HalluClean.
+To mitigate this, future work will explore incorporating lightweight verification modules or hybrid approaches
+that combine retrieval-augmented generation with structured
+reasoning. Additionally, fine-tuning smaller models with
+distilled reasoning traces from larger LLMs could offer a
+promising direction to improve performance while reducing
+computational costs.
+Ethics Statement
+In this study, we uses the APIs provided by OpenAI and
+DeepSeek, which are also strictly used for research purposes
+and in accordance with the terms and conditions stipulated
+by OpenAI and DeepSeek.
+Dataset Statistics
+We evaluate our framework on four hallucination-related
+datasets, covering diverse tasks and domains. To ensure fairness, we maintain class balance when sampling examples
+for evaluation. The summary of the datasets, including their
+source, task type, and the number of used instances, is shown
+in Table 8. Here, pos refers to samples labeled as containing
+hallucinations.
+Demonstration Cases
+Representative
+examples
+from
+five
+tasks—Question
+Answering (QA), Dialogue System (DA), Summarization (SUM), Math Word Problems (MWPs), and Selfcontradictory hallucination (SC)—are shown in Figures 4
+to 8, where our framework successfully detects and revises
+hallucinations.
+Results on Module Applicability
+To assess the generalizability of our framework components,
+we conduct module-level ablation experiments across different backbone LLMs. Specifically, we evaluate the performance of the detection module (Table 9) and the revision
+module (Table 10) when integrated with various base models.
+Detailed Prompt Examples Used in Experiments
+We present the exact prompts used in our experiments, including our structural-reasoning mechanism (Table 11),
+which encourage more structured and faithful reasoning, as
+well as baseline prompt strategies (Table 12) adapted from
+prior works for comparison.
+Error Analysis
+We analyze the failure cases in hallucination detection,
+which can be broadly categorized into three types:
+• Misunderstanding of Language: The model fails to
+correctly interpret the question or the answer.
+• Lack of Background Knowledge: The model is unable
+to detect hallucinations when it lacks access to essential
+domain or factual knowledge required for verification.
+• Incorrect Reasoning: The model starts with a correct interpretation or premise but makes logical mistakes during
+the reasoning process, leading to incorrect conclusions.
+In the following, we provide representative examples illustrating each of the three identified error types.
+
+TASK
+Dataset
+Data Source
+#Instances(pos/neg)
+Question Answering
+HalEval
+HotPotQA
+400(200/200)
+Dialogue
+HalEval
+OpenDiaKG
+400(200/200)
+Summarization
+HalEval
+CNN/DailyMail
+400(200/200)
+Math Word Problems
+UMWPs
+SVAMP/MultiArith/GSM8K/ASDiv
+400(200/200)
+Self Contradiction
+Chatprotect
+Wikipedia
+300(150/150)
+CovidQA
+Halubench
+scientific articles
+200(100/100)
+PubmedQA
+Halubench
+PubMed
+200(100/100)
+FinanceBench
+Halubench
+Companies’ public filings
+200(100/100)
+HalluQA(Chinese)
+HalluQA
+Chinese historical culture/customs/social phenomena
+200(100/100)
+CMHE-HD(Chinese)
+CMHE
+CMD/cMedQA2
+200(100/100)
+Table 8: Dataset statics
+Model
+QA
+DA
+SUM
+MWPs
+SC
+F1
+ACC
+F1
+ACC
+F1
+ACC
+F1
+ACC
+F1
+ACC
+GPT-3.5-turbo
+33.5%
+59.3%
+62.8%
+66.0%
+24.7%
+55.8%
+50.9%
+59.5%
+46.0%
+64.0%
++ours
+67.8%
+66.5%
+74.3%
+69.3%
+65.9%
+69.2%
+80.3%
+81.5%
+87.0%
+87.0%
+GPT-4o-mini
+52.7%
+64.5%
+76.5%
+74.0%
+45.5%
+64.0%
+61.7%
+70.5%
+84.2%
+72.7%
++ours
+70.4%
+69.0%
+77.1%
+72.5%
+69.5%
+69.3%
+89.1%
+89.8%
+85.1%
+74.0%
+Llama-3-70B
+44.7%
+62.3%
+66.4%
+62.3%
+32.4%
+59.3%
+83.4%
+83.5%
+65.8%
+73.7%
++ours
+70.6%
+69.0%
+74.0%
+68.8%
+46.5%
+61.5%
+85.6%
+86.0%
+80.8%
+83.3%
+DeepSeek-V3
+62.2%
+70.3%
+75.4%
+71.8%
+55.0%
+66.5%
+55.6%
+68.0%
+52.0%
+67.3%
++ours
+71.5%
+70.5%
+77.1%
+72.5%
+62.9%
+67.5%
+89.1%
+89.5%
+76.1%
+80.3%
+Table 9: Detection module adaptability across backbone LLMs.
+[INPUT]
+Question: Bebe Rexha was a singer who guested on the David Guetta song that was produced by which Dutch DJ?
+Answer: "Take Me Home" is a song by Bebe Rexha, produced by a Dutch DJ.
+[Detection]
+To determine whether the answer contains hallucinated content, let's break down the question and the provided answer step-by-step.
+1. Understanding the Question:
+ - The question asks about a collaboration between Bebe Rexha and David Guetta.
+ - It specifically inquires about the Dutch DJ who produced the song associated with Bebe Rexha and David Guetta.
+2. Evaluating the Answer:
+ - The answer states, "Take Me Home" is a song by Bebe Rexha, produced by a Dutch DJ.
+ - The phrase "by a Dutch DJ" is vague. It does not specify who the DJ is nor does it tie back to David Guetta directly. Instead, it references
+a song ("Take Me Home") that is not primarily recognized as associated with Guetta.
+- Furthermore, Bebe Rexha's prominent collaborations with David Guetta include songs like "Hey Mama" and "Say My Name," not "Take Me
+Home."
+3. Analyzing for Hallucinated Content:
+- The mention of "Take Me Home" is misleading in this context, as it does not relate to the premise of the question regarding collaboration
+with David Guetta.
+- The answer fails to address the actual Dutch DJ associated with Guetta (who is, in fact, a well-known figure but does not need to be
+mentioned in the answer) and does not correctly address the question about a specific collaboration.
+- Therefore, the answer is not only off-topic but also produces inaccurate or ambiguous information.
+In conclusion, the answer does indeed contain hallucinated content as it misrepresents Bebe Rexha's work in relation to David Guetta and fails to
+provide accurate information relevant to the question asked. The song title presented does not align with the inquiry, which suggests a disconnect
+between the question and the response.
+[Revision]
+"Take Me Home" is a song by Bebe Rexha, produced by a Dutch DJ.
+Afrojack.
+Figure 4: An illustrative example of the question answering hallucination detection and revision. original hallucinated content ,
+correct conclusions , and correct reasoning and revisions .
+
+[INPUT]
+Dialogue history:
+[Human]:  What do you think about the Brooklyn Nets? I haven't heard much about them. [Assistant]: They're alright, Jason Kidd is their coach
+and they were the runner-up in the 2003 NBA finals. [Human]: Oh, okay. I'm not a big fan of basketball. Are you? [Assistant]: I watch it here
+and there. The Brooklyn Nets are on the Eastern Conference and their stadium is the Barclays Center  [Human]: Oh. Do you have a sport that
+you like better?
+Response:
+To be honest, I think the Brooklyn Nets are a soccer team. They were runner-up in the 2003 World Cup. I'm more of a fan of American football,
+personally.
+[Detection]
+To determine whether the response contains hallucinated content, we need to analyze the factual accuracy of the statements made in the
+response. Let's break it down step by step:
+1.Identifying the Subject :
+The human has asked about the Brooklyn Nets, a professional basketball team, and has shown minimal interest in basketball, while expressing
+curiosity about the assistant's preferences in sports.
+2.Assessing the Assistant's Historical Context:
+Before the human's final question, the assistant provided some correct information about the Brooklyn Nets, including their active league (NBA)
+and their home stadium (Barclays Center). Moreover, it stated that the Nets were runners-up in the 2003 NBA Finals.
+3. Analyzing the Response:
+The assistant claims that the Brooklyn Nets are a "soccer team " and not a basketball team. This is factually incorrect. the Brooklyn Nets are
+indeed a basketball team, and stating they are a soccer team is hallucinated content.
+4. Conclusion:
+The assistant's statement that the Brooklyn Nets are a soccer team, as well as misleading references to their performance in the World Cup,
+clearly indicates the presence of hallucinated content. The information presented is not only inaccurate but also fictitious regarding the affiliation
+of the Brooklyn Nets. Thus, the response indeed contains hallucinated content.
+[Revision]
+To be honest, I think the Brooklyn Nets are a soccer team. They were runner-up in the 2003 World Cup. I'm more of a fan of American football,
+personally.
+I watch it here and there. The Brooklyn Nets are in the Eastern Conference and their stadium is the Barclays Center. Oh. Do you have a sport
+that you like better?
+Figure 5: An illustrative example of the dialogue system hallucination detection and revision. original hallucinated content ,
+correct conclusions , and correct reasoning and revisions .
+Model
+QA
+DA
+SUM
+MWP
+SC
+R
+Q
+R
+Q
+R
+Q
+R
+Q
+R
+Q
+GPT-3.5-turbo
+20.5%
+18.0%
+57.5%
+57.5%
+14.5%
+14.5%
+42.0%
+13.0%
+30.7%
+30.7%
++Ours
+72.5%
+69.0%
+89.0%
+88.0%
+59.5%
+59.5%
+75.5%
+34.0%
+87.3%
+87.3%
+GPT-4o-mini
+20.5%
+17.5%
+57.5%
+57.5%
+30.0%
+14.5%
+42.0%
+19.0%
+30.7%
+30.7%
++Ours
+70.5%
+61.5%
+89.0%
+89.0%
+59.5%
+59.5%
+75.5%
+36.0%
+87.3%
+87.3%
+Llama-3-70B
+20.5%
+18.5%
+57.5%
+57.5%
+19.5%
+14.5%
+42.0%
+18.5%
+30.7%
+30.7%
++Ours
+70.5%
+59.5%
+89.0%
+89.0%
+59.5%
+59.5%
+75.5%
+36.0%
+87.3%
+87.3%
+DeepSeek-V3
+20.5%
+19.0%
+57.5%
+57.5%
+41.0%
+41.0%
+42.0%
+21.5%
+30.7%
+30.7%
++Ours
+70.5%
+60.5%
+89.0%
+89.0%
+59.5%
+59.5%
+75.5%
+36.5%
+87.3%
+87.3%
+DeepSeek-R1
+17.0%
+15.5%
+57.5%
+57.5%
+36.5%
+14.5%
+42.0%
+25.0%
+30.7%
+30.7%
++Ours
+70.5%
+59.5%
+89.0%
+89.0%
+59.5%
+59.5%
+75.5%
+37.5%
+87.3%
+87.3%
+Table 10: Revision module adaptability across backbone LLMs. R denotes the hallucination reduction rate after applying the
+revision module, and Q denotes the revision success rate, which reflects the quality of corrections.
+
+[INPUT]
+Document:
+Rangers have promised to probe claims Mike Ashley has grabbed control of the club's badges. Reports emerged  suggesting the Newcastle
+owner was now the official owner of the Light Blues trademarks. But now Dave King's new regime have promised a speedy investigation after
+documents appeared on the government-run Intellectual Property Office (IPO) website showing the club's trademarks were now controlled by
+SportsDirect.com Retail Ltd. In a statement a club spokesman said: 'The board is currently conducting a review of all contractual documentation
+but this particular issue has become a matter of urgency.' News that Ashley has seized hold of more treasured assets will worry the Ibrox
+faithful. The Londoner is already vastly unpopular after grabbing hold of a 75 per cent share of the club's retail income with his loan deal. Dave
+King's new regime have promised a speedy investigation into the claims surrounding Ashley. The IPO site confirm the transfer from Rangers
+Football Club Ltd to Sports Direct was fully assigned on March 25 - less than three weeks after former chief executive and Ashley ally Derek
+Llambias and finance director Barry Leach, a former Sports Direct executive, were removed at a general meeting called by King. Yet Interim
+chairman Paul Murray announced two days later that the new board had held 'no discussions with Mike Ashley or Sports Direct'. Rangers
+announced last week that if they gain promotion to the Premiership, they will have to pay Newcastle 3500,000 as part of the deal which saw five
+Magpies youngsters move to Ibrox on loan. Ashley was given security over the icons and logos as part of the 35m loan handed to the previous
+board.
+Summary:
+Mike Ashley has officially taken control of the Light Blues trademarks of Rangers Football Club Ltd. The iconic 'Ready' badge and Broxi Bear
+mascot are now owned by SportsDirect.com Retail Ltd, according to documents on the government-run Intellectual Property Office (IPO)
+website. The new regime under Dave King has urgently launched an investigation into the matter after the transfer was fully assigned on March
+25. The transfer of assets to Sports Direct was announced just two days after the new board announced they had no discussions with Mike
+Ashley or Sports Direct. The Ibrox faithful are now worried that Ashley will take more control over their beloved club.
+[Detection]
+To determine whether the summary contains hallucinated content, we will compare the details provided in the document with those presented in
+the summary to identify any inaccuracies or misleading statements. Here is the step-by-step reasoning:
+1. Analyze the Document:
+- The document discusses claims that Mike Ashley has taken control of the trademarks related to Rangers Football Club, including the
+'Ready' badge and Broxi Bear mascot.
+- It mentions that reports on social media suggested Ashley was the owner of these trademarks, but that Rangers is conducting a review
+and has promised to investigate.
+- The document notes that Ashley was given security over the trademarks as part of a loan to the previous board.
+- It also points out that the transfer appears to have occurred on March 25 and that this was announced just two days after the new board
+stated they had no discussions with Ashley or Sports Direct.
+- Rangers fans are worried about this situation.
+2. Analyze the Summary:
+- The summary states that "Mike Ashley has officially taken control of the Light Blues trademarks," which presents a definitive conclusion
+about ownership.
+- It claims that the "iconic 'Ready' badge and Broxi Bear mascot are now owned by SportsDirect.com Retail Ltd" and refers to documents
+from the IPO website, thereby suggesting conclusive legality regarding these trademarks.
+- The summary also mentions that Dave King new regime has "urgently launched an investigation," aligning with the document.
+- However, it overlooks the part where the document clearly indicates the situation is under review and investigation rather than resolved.
+3. Identify Hallucinated Content:
+- The phrase "Mike Ashley has officially taken control" reflects a certainty that is not supported by the document, which highlights ongoing
+investigation and the board's review process.
+- It implies finality to the control over trademarks, while the actual document indicates that the matter is still under scrutiny. This misleads
+the reader into thinking that the control issue has been definitively settled.
+4. Conclusion:
+- The summary distorts the situation by asserting that ownership has been conclusively resolved, which is contrary to the document's
+message that the club is investigating the claims.
+- Therefore, the summary does contain hallucinated content because it misrepresents the lack of resolution regarding the ownership of the
+trademarks and misleads readers about the status of the investigation into the claims.
+Based on this analysis, it's clear that the summary inaccurately presents definitive ownership where the document states that the issue is still in
+review. Thus, we conclude that the summary contains hallucinated content."
+[Revision]
+Mike Ashley has officially taken control of the Light Blues trademarks of Rangers Football Club Ltd. The iconic 'Ready' badge and Broxi Bear
+mascot are now owned by SportsDirect.com Retail Ltd, according to documents on the government-run Intellectual Property Office (IPO)
+website. The new regime under Dave King has urgently launched an investigation into the matter after the transfer was fully assigned on March
+25. The transfer of assets to Sports Direct was announced just two days after the new board announced they had no discussions with Mike
+Ashley or Sports Direct. The Ibrox faithful are now worried that Ashley will take more control over their beloved club.
+Rangers have promised to probe claims that Mike Ashley has grabbed control of the club's badges, including the 'Ready' badge and mascot Broxi
+Bear. The club is conducting a review of all contractual documentation to address this issue urgently.
+Figure 6: An illustrative example of the summarization hallucination detection and revision. original hallucinated content ,
+correct conclusions , and correct reasoning and revisions .
+
+[INPUT]
+Question: Randy has 58 blocks. He uses 27 blocks to build a tower and less than 53 blocks to build a house. How many blocks did he use
+to build the tower and the house altogether?
+[Detection]
+Let's carefully analyze the problem to determine whether it is answerable.
+Step 1: Understand the Problem
+The problem states:
+- Randy has 58 blocks.
+- He uses 27 blocks to build a tower.
+- He uses less than 53 blocks to build a house.
+- The question asks: How many blocks did he use to build the tower and the house altogether?
+Step 2: Identify Known and Unknown Quantities
+1. Known:
+- Blocks used for the tower: 27.
+- Blocks used for the house: less than 53 (i.e., between 0 and 52).
+- Total blocks Randy has: 58.
+2. Unknown:
+- Exact number of blocks used for the house.
+Step 3: Analyze the Constraints
+1. Blocks used for the house:The problem states that Randy uses less than 53 blocks for the house. This means the number of blocks
+used for the house could be any integer from 0 to 52.
+2. Total blocks used: The total blocks used for the tower and house would be: Total blocks used  = Blocks for tower + Blocks for
+house.  Substituting the known value: Total blocks used = 27 + Blocks for house
+Step 4: Determine the Range of Total Blocks Used
+Since the number of blocks used for the house is not specified exactly, the total blocks used can vary depending on the value of
+"blocks for house." Let's calculate the minimum and maximum possible totals:
+1. Minimum total blocks used: If Randy uses 0 blocks for the house: [Total blocks used = 27 + 0 = 27 ]
+2. Maximum total blocks used: If Randy uses 52 blocks for the house: [Total blocks used = 27 + 52 = 79]
+Thus, the total blocks used can range from 27 to 79.
+Step 5: Assess the Answerability of the Problem
+The problem asks for the total number of blocks used for the tower and house. However, the number of blocks used for the house is
+not specified exactly; it is only given as less than 53. This means the total blocks used can vary within a wide range (27 to 79), and there is
+no single, precise answer.
+Step 6: Conclusion
+The problem is unanswerable because it does not provide sufficient information to determine the exact total number of blocks used for
+the tower and house. Final Answer: The problem is unanswerable because it does not provide the exact number of blocks used to build the
+house, making it impossible to determine the total number of blocks used for both the tower and the house.
+[Revision]
+Randy has 58 blocks. He uses 27 blocks to build a tower and less than 53 blocks to build a house. How many blocks did he use to build the
+tower and the house altogether?
+Randy has 58 blocks. He uses 27 blocks to build a tower and 31 blocks to build a house. How many blocks did he use to build the tower and
+the house altogether?
+Figure
+7:
+An
+illustrative
+example
+of
+the
+unanswerable
+math
+word
+problems
+detection
+and
+revision. original under-specified content , correct conclusions , and correct reasoning and revisions .
+
+[INPUT]
+Text 1: In 1959, the Bailey family sold the home to the Thompson family, who subsequently donated it to the Tallahassee Junior Museum.
+Text 2: The Bailey-Thompson House was bought by the Thompson family in 1956 and remained in their ownership until 2003.
+[Detection]
+Step 1: Identify key points in Text 1:
+- The Bailey family sold the home to the Thompson family in 1959.
+- The Thompson family donated the house to the Tallahassee Junior Museum.
+Step 2: Identify key points in Text 2:
+- The Bailey-Thompson House was bought by the Thompson family in 1956.
+- The Thompson family owned the house until 2003.
+Step 3: Compare the key points:
+- Text 1: Bailey family sold to Thompson family in 1959.
+- Text 2: Thompson family bought in 1956.
+Step 4: Contradiction identified:
+- Text 1 states the house was sold to the Thompson family in 1959.
+- Text 2 indicates the Thompson family bought the house in 1956.
+Step 5: Conclusion:
+The information in the two texts is contradictory regarding the ownership of the Bailey-Thompson House.
+[Revision]
+The Bailey-Thompson House was bought by the Thompson family in 19561959 and remained in their ownership until 2003.
+Figure
+8:
+An
+illustrative
+example
+of
+the
+self-contradictory
+hallucination
+detection
+and
+revision.
+original self-contradiction content , correct conclusions , and correct reasoning and revisions .
+[INPUT]
+Question: "What Lindsey Stirling song's video received 1.3 million views on YouTube after one day?"
+Answer: "Shatter Me".
+[Detection]
+The answer provided is that the Lindsey Stirling song "Shatter Me" received 1.3 million views on YouTube after one
+day. As of the latest check, the video has over 280 million views. Since the actual view count for the "Shatter Me"
+music video by Lindsey Stirling on YouTube is significantly higher than the 1.3 million views mentioned in the
+answer, it can be concluded that the answer contains hallucinated content.
+Conclusion:The answer that claims the "Shatter Me" music video by Lindsey Stirling received 1.3 million views on
+YouTube after one day is hallucinated content, as the actual view count is much higher."
+[Error Type]
+Misunderstanding of Language
+Figure 9: A typical case example of language misunderstanding, where the Red text highlights the part where misunderstanding of language causes the error.
+[INPUT]
+Question: Stranger Things is an American science fiction-horror web television series created, written, directed and
+co-executive produced by the Duffer Brothers, the first season stars include Gaten Matarazzo, an American actor,
+who began his career on the Broadway stage as who, in "Priscilla, Queen of the Desert" ?
+Answer: Benjamin
+[Detection]
+1. Verification of information regarding Stranger Things, Gaten Matarazzo, and his career: "Stranger Things" is
+indeed an American science fiction-horror web television series created, written, directed, and co-executive
+produced by the Duffer Brothers.- Gaten Matarazzo is an American actor known for his role in Stranger
+Things.\n\n2. Check if Gaten Matarazzo starred in the Broadway stage production "Priscilla, Queen of the Desert"
+and his character name:- Upon verification, it is found that Gaten Matarazzo did not star in the Broadway stage
+production "Priscilla, Queen of the Desert." This information is false.3. Compare the information in the answer
+("Benjamin") with verified information:- Since Gaten Matarazzo did not star in "Priscilla, Queen of the Desert," the
+character name "Benjamin" is hallucinated content as it does not align with verified information.Therefore, the
+answer contains hallucinated content."
+[Error Type]
+Lack of Background Knowledge
+Figure 10: A typical case of lacking background knowledge, with Red highlighting the error-causing segment due to missing
+related knowledge.
+
+Task Type
+Structural Reasoning Prompt
+Question Answering
+Step-1 You are provided with a question and its corresponding answer. Your task is to
+determine whether the answer contains hallucinated content. Let’s understand the task
+and devise a plan to solve the task. [Task Input]
+Step-2 Let’s carry out the plan and solve the task step by step. Show the reasoning
+process. [Task Input;Result from Step-1]
+Step-3 Please conclude whether the answer contains hallucinated content with Yes or
+No. [Task Input;Result from Step-2]
+Step-4 Given a question, its corresponding hallucinated answer, and an analysis explaining why the answer contains hallucinated content. Your task is to answer the
+question without introducing any hallucinations. [Task Input;Result from Step-2]
+Dialogue Systems
+Step-1 You are provided with a dialogue history and its corresponding response. Your
+task is to determine whether the response contains hallucinated content. Let’s understand the task and devise a plan to solve the task. [Task Input]
+Step-2 Let’s carry out the plan and solve the task step by step. Show the reasoning
+process. [Task Input;Result from Step-1]
+Step-3 Please conclude whether the response contains hallucinated content with Yes
+or No. [Task Input;Result from Step-2]
+Step-4 Given a dialogue history and its corresponding hallucinated response. Your
+task is to regenerate the response without introducing any hallucinations. [Task Input;Result from Step-2]
+Summarization
+Step-1 You are provided with a document and its corresponding summary. Your task
+is to determine whether the summary contains hallucinated content. Let’s understand
+the task and devise a plan to solve the task. [Task Input]
+Step-2 Let’s carry out the plan and solve the task step by step. Show the reasoning
+process. [Task Input;Result from Step-1]
+Step-3 Please conclude whether the summary contains hallucinated content with Yes
+or No. [Task Input;Result from Step-2]
+Step-4 Given a document,its corresponding hallucinated summary , and an analysis
+explaining why the summary contains hallucinated content. Your task is to regenerate
+the summary without introducing any hallucinations. [Task Input;Result from Step-2]
+Math Word Problems
+Step-1 You are provided with a math word problem. Your task is to determine whether
+the problem is unanswerable. Let’s understand the task and devise a plan to solve the
+task. [Task Input]
+Step-2 Let’s carry out the plan and solve the task step by step. Show the reasoning
+process. [Task Input;Result from Step-1]
+Step-3 Please conclude whether the problem is unanswerable with Yes or No. [Task
+Input;Result from Step-2]
+Step-4 Given a unanswerable math word problem and an analysis explaining why
+it is unanswerable. Your task is to revise the problem to make it answerable. [Task
+Input;Result from Step-2]
+Self-contradiction
+You are given two texts. Your task is to determine whether the information in the two
+texts is contradictory. Let’s understand the task and devise a plan to solve the task.
+[Task Input]
+Step-2 Let’s carry out the plan and solve the task step by step. Show the reasoning
+process. [Task Input;Result from Step-1]
+Step-3 Please conclude whether the two texts are contradictory with Yes or No. [Task
+Input;Result from Step-2]
+Step-4 Given Text 1, Text 2, and the analysis of the contradiction between them. Your
+task is to revise Text 2 to remove the contradiction, making it consistent with Text 1.
+[Task Input;Result from Step-2]
+Table 11: Structured reasoning prompts for different NLP applications.
+
+Prompt Strategy
+Prompt content
+Direct Ask
+Please only conclude whether the text contains hallucinated content with Yes or No.
+[Question,Answer]
+Step-by-step
+You are provided with a question and its corresponding answer. Does the answer contain hallucinated content? First, show your reasoning in a step-by-step fashion. Then
+conclude with yes or no.[Question,Answer]
+SelfCheckGPT
+Is
+the
+sentence
+supported
+by
+the
+context
+above?
+Answer
+Yes
+or
+No.[Context:Question,Sentence:Answer]
+Plan-and-Solve
+The Problem is to determine whether the text contains hallucinated content with Yes
+or No. Let’s first understand the problem and devise a plan to solve the problem.Then,
+let’s carry out the plan andsolve the problem step by step.[Question,Answer]
+ChatProtect
+Step-1: You are provided with a question and its corresponding answer. Please explain whether the answer contains hallucinated content. Provide your explanation
+only.Step-2: Please conclude whether the answer contains hallucinated content with
+Yes or No. [Question,Answer]
+Table 12: Baseline prompt strategies used for comparison with our detection method (QA task shown as example).
+[INPUT]
+Math Word Problem: "There were 13 roses in the vase. Jessica cut some more roses from her flower garden
+which had a total of 12 roses. There are now 21 roses in the vase..How many roses are left in the garden?".
+[Detection]
+To determine if the problem is unanswerable, let's break down the information provided:1. Initially, there were 13
+roses in the vase. 2. Jessica cut some roses from her garden, which had a total of 12 roses. 3. After cutting roses
+from her garden and adding them to the vase, there are now 21 roses in the vase.To find out how many roses are
+left in the garden, we need to know how many roses Jessica cut from her garden. Let's denote the number of roses
+Jessica cut from her garden as x. Initially, there were 13 roses in the vase, and Jessica cut x roses from her garden,
+which had 12 roses. Therefore, she added a total of 12 + x roses to the vase.So, the total number of roses in the
+vase is 13 (initial roses) + x (roses cut from the garden) = 12 (roses in the garden) + x (roses cut from the
+garden).According to the problem, the total number of roses in the vase after Jessica added the cut roses is
+21.Therefore, we have the equation:13 + x = 12 + x + 21\n\nSolving this equation, we get:\n13 + x = 33 + x. x -
+x = 33 - 13, 0 = 20. This results in 0 = 20, which is not true. \n\nSince our equation does not lead to a valid
+solution (0 = 20), we can conclude that the problem is unanswerable as it is currently presented.
+[Error Type]
+Incorrect Reasoning
+Figure 11: A typical case of incorrect reasoning, where the initially correct reason is highlighted in green , and the error in
+reasoning is marked in red .

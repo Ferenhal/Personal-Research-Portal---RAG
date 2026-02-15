@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 VENV := .venv
+PYTHON := /opt/homebrew/opt/python@3.12/bin/python3.12
 PY := $(VENV)/bin/python
 PIP := $(PY) -m pip
 
@@ -8,6 +9,10 @@ MANIFEST := data/manifest/Corpus.csv
 RAW_DIR := data/raw
 PROCESSED_DIR := data/processed
 LOG_DIR := logs
+CHUNKS_DIR := data/chunks
+CHUNKS_PATH := $(CHUNKS_DIR)/chunks.jsonl
+INDEX_DIR := data/index
+
 
 .PHONY: help venv setup ingest clean
 
@@ -18,7 +23,7 @@ help:
 	@echo "make clean   - remove generated artifacts"
 
 venv:
-	python3 -m venv $(VENV)
+	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
 
 setup: venv
@@ -29,3 +34,11 @@ ingest:
 
 clean:
 	rm -rf $(PROCESSED_DIR) $(LOG_DIR)
+
+chunk:
+	mkdir -p $(CHUNKS_DIR)
+	$(PY) -m src.chunk --manifest data/manifest/manifest.enriched.csv --out $(CHUNKS_PATH) --chunk_size_chars 3200 --overlap_chars 400 --log_dir $(LOG_DIR)
+
+index:
+	mkdir -p $(INDEX_DIR)
+	$(PY) -m src.index --chunks data/chunks/chunks.jsonl --index_dir $(INDEX_DIR) --log_dir $(LOG_DIR) --use_cosine

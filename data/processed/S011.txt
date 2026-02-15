@@ -1,0 +1,2965 @@
+Hallucination is a Consequence of Space-Optimality:
+A Rate-Distortion Theorem for Membership Testing
+Anxin Guo
+Computer Science Department
+Northwestern University, USA
+anxinbguo@gmail.com
+Jingwei Li
+Department of IEOR
+Columbia University, USA
+jl6639@columbia.edu
+Abstract
+Large language models often hallucinate with high confidence on “random facts” that lack
+inferable patterns. We formalize the memorization of such facts as a membership testing problem,
+unifying the discrete error metrics of Bloom filters with the continuous log-loss of LLMs. By
+analyzing this problem in the regime where facts are sparse in the universe of plausible claims,
+we establish a rate-distortion theorem: the optimal memory efficiency is characterized by the
+minimum KL divergence between score distributions on facts and non-facts. This theoretical
+framework provides a distinctive explanation for hallucination under an idealized setting: even
+with optimal training, perfect data, and a simplified “closed world” setting, the informationtheoretically optimal strategy under limited capacity is not to abstain or forget, but to assign high
+confidence to some non-facts, resulting in hallucination. We validate this theory empirically on
+synthetic data, showing that hallucinations persist as a natural consequence of lossy compression.
+1
+Introduction
+Despite their transformative impact, Large Language Models (LLMs) are hindered by hallucinations—
+the generation of confident and plausible yet factually incorrect statements. Recently, an influential
+line of work (Kalai et al., 2025; Mohsin et al., 2025; Xu, 2025; Wu et al., 2025; Gumaan, 2025)
+provided theoretical explanations of hallucination from a statistical learning perspective, by viewing
+an LLM as implementing a binary classifier over random facts—facts that are unstructured and
+cannot be logically inferred unless encountered during training, such as phone numbers or biographical
+details. By a no-free-lunch-style logic, since generalization is impossible on these facts, the model
+must make uninformed guesses on unseen random facts, leading to systematic inference errors. In
+the classification setting, hallucination corresponds to false positives resulting from such guesses.
+As a natural workaround, researchers have promoted abstention (Kalai et al., 2025; Wen et al.,
+2025), where an LLM is expected to provide an “I don’t know” response on unseen random factual
+queries. Theoretically, we can further simplify the task by adopting a “closed-world assumption,”
+where all unseen potential facts are treated as non-facts at evaluation time 1. Under this setting, an
+ideal LLM can be both informative and non-hallucinating on factual queries, as long as it accurately
+distinguishes the finitely many known facts from all other (potentially true but unknown) non-facts.
+This reduces hallucination mitigation to a sample-efficient memorization task.
+However, empirical evidence suggests that LLMs struggle to perform this memorization task
+reliably. Even when permitted to abstain, models continue to generate high-confidence hallucinations
+1Alternatively, one can assume all true facts are seen during training.
+1
+arXiv:2602.00906v4 [cs.LG] 5 Feb 2026
+
+and also exhibit “over-refusal” on legitimate queries (Cheng et al., 2024; Brahman et al., 2024; Zhu
+et al., 2025), reflecting a precision-recall trade-off. This points to a different bottleneck beyond
+no-free-lunch: the finite capacity of model parameters forces lossy compression of the training data,
+making memorization of specific, unstructured facts non-trivial.
+This information-theoretic perspective connects to several recent works (Pan et al., 2025; Shi
+et al., 2025; Mohsin et al., 2025; Kim, 2025a,b) that attribute hallucination to distortion incurred
+when compressing an infinitely complex world of knowledge into a model with finite capacity. Despite
+these insights, two gaps remain. First, “compression causes errors” does not explain the shape of
+the errors: while forgetting is natural under limited capacity, it is unclear why hallucination is
+particularly prevalent. Second, existing compression-based explanations are either high-level informal
+arguments or assume an infinite number of facts, whereas our closed-world assumption restricts facts
+to a finite set. This motivates a more rigorous study in a simplified setting:
+What is the theoretical explanation for high-confidence hallucinations in a closed world
+with finitely many random facts?
+In this work, we argue that these hallucinations are driven by the asymmetry between facts and
+non-facts. Specifically, if facts are sparse and randomly distributed in a vast universe of plausible
+statements, then an LLM with limited memory capacity will tend to accept many non-facts as facts.
+To formalize this intuition, we model factuality judgment as a membership testing problem. We
+view each plausible statement as an element i in a universe U, and the set of known facts as a key
+set K ⊆U. Given a query i ∈U, the model outputs a confidence score ˆ
+xi ∈[0, 1] indicating its belief
+that i ∈K; under this view, hallucinations correspond to non-keys being assigned high confidence.
+The score ˆ
+xi can be evaluated under generic error metrics that measure the discrepancy between ˆ
+xi
+and the true label 1{i ∈K}. The goal of a membership tester is to use a small memory budget to
+store the keys and achieve small expected error on queries. This abstraction subsumes approximate
+membership data structures2 such as Bloom filters (Bloom, 1970), for which the query output is
+limited to {0, 1}.
+1.1
+Our contributions
+A rate-distortion theorem for membership testing. We consider the sparse limit where
+|K|
+|U| →0. In this regime, we identify the exact memory-error trade-off in the form of a rate-distortion
+theorem. Specifically, the minimum memory budget per key is characterized by the minimum
+KL-divergence between key and non-key output distributions.
+Theorem 1.1 (Informal, Theorems 3.1, 3.2). Let KL(P∥Q) denote the base-2 Kullback-Leibler
+divergence between distributions P and Q. To store n keys in the sparse regime and reach a certain
+error level under generic error metrics, it is necessary and sufficient for a membership tester to store
+n · KL(µK∥µN) + o(n) bits of information,
+where µK and µN are the distributions of scores ˆ
+xi conditioned on i ∈K and i /
+∈K, respectively, that
+satisfy the error constraints and minimize the KL-divergence.
+Moreover, score distributions of an optimal membership tester must converge to µK and µN in
+the sparse limit.
+KL divergence arises naturally from the asymmetry between keys and non-keys. If X1, . . . , Xn ∼
+µN are drawn i.i.d., then n · KL(µK∥µN) roughly measures the negative log-likelihood of X1, . . . , Xn
+2We will call these data structures “filters” for convenience.
+2
+
+being distributed as µK. This value therefore quantifies how many extra bits of information are
+needed to force the key query output to be µK, overcoming the default assumption that they follow
+the non-key distribution µN.
+Hallucination as the optimal mode of error. Our theory provides two perspectives on why
+it is memory-efficient for LLMs to hallucinate on random facts. First, consider a model tasked with
+estimating the probability P[i ∈K] that a potential fact i ∈U is true, where the output ˆ
+xi ∈[0, 1] is
+evaluated with logarithmic or cross-entropy loss, consistent with the maximum likelihood objective
+and previously proposed training/evaluation methods for factual knowledge (Kadavath et al., 2022;
+Cheng et al., 2024).
+The unique loss-minimizing query output under this metric, given a fixed memory capacity, is to
+assign high confidence to all facts, while assigning either zero or fact-level confidence to non-facts.
+In other words, the model simultaneously recalls all facts and hallucinates on a fraction of non-facts.
+We also empirically verify this tendency on synthetic data. For a probability estimation task,
+hallucination, instead of systematic forgetting or uniform uncertainty, is the natural mode of error.
+Classifier via thresholding and two-sided filters. Our second perspective establishes
+that any LLM decision mechanism based on score thresholding—whether the scores are derived
+from generative probabilities (Kalai et al., 2025) or the probability estimation output above—is
+subject to the fundamental memory-error trade-off of two-sided filters, a generalization of Bloom-type
+filters (Bloom, 1970) allowing both false positives and false negatives. Unlike the first perspective,
+this result applies to all LLM-based classification mechanisms and does not assume optimality.
+Applying our result to filters, our analysis recovers and refines the various existing space lower
+bounds (Carter et al., 1978; Pagh and Rodler, 2001; Hurley and Waldvogel, 2007; Li et al., 2023a).
+We also show that a hash-based two-sided filter achieves our lower bound up to o(n) bits of space
+overhead. As a corollary, eliminating hallucinations (false positives) on random facts is very costly
+without a simultaneous increase in forgetting or over-refusal (false negatives). Post-processing for
+factual accuracy only moves us along the memory-error frontier, not beyond it.
+Further discussions on the memory capacity. Although modern models have billions
+of parameters, the effective memory budget for storing a particular family of random facts can
+be far smaller. Appendix A provides two explanations: (i) modern networks are encouraged to
+minimize pure memorization (through various regularization and MDL/PAC-Bayes viewpoints),
+and (ii) structured knowledge (e.g., language and reasoning) and random facts compete for a finite
+memory budget, where the former takes precedence during learning due to its greater impact on the
+training objective. Our view resonates with the “memorization is necessary” argument by Feldman
+et al. (Feldman, 2020; Feldman and Zhang, 2020; Brown et al., 2021): while (implicit) regularization
+reduces the overfitting to noise, its tendency to limit memorization can be detrimental to the model’s
+performance on long-tail, high-entropy facts.
+Crucially, this tendency is amplified by the rate-distortion frontier’s shape: the marginal memory
+cost to eliminate the final few errors is prohibitively high.
+Consequently, permitting a small
+probability of hallucination yields a disproportionately large reduction in the required memory
+budget—a trade-off that is naturally favored by training objectives optimizing for aggregate loss
+rather than perfect precision. We argue that these mechanisms, taken together, result in a small
+effective memory budget for random facts, leading to the observed high-confidence hallucinations.
+Conversely, our analysis supports the effectiveness of additional fine-tuning on unstructured
+random facts, which encourages the model to allocate more memory budget. Our framework also
+justifies why incorporating external information, such as using RAG (Lewis et al., 2020), is effective
+in mitigating hallucinations: memory budget is no longer a limiting factor when non-parametric
+memory is present.
+3
+
+1.2
+Related work
+Hallucination (Ji et al., 2023; Alansari and Luqman, 2025; Huang et al., 2025b) is often defined
+as the generation of content that is fluent and plausible but factually inaccurate, nonsensical,
+or unfaithful to source material. A large body of empirical works has identified causal factors
+throughout the entire LLM development pipeline, attributing them to data-centric causes (noisy web
+corpora) (Dodge et al., 2021; Bender et al., 2021; Perelkiewicz and Poswiata, 2024), model-centric
+causes (objectives/architectural limits of next-token prediction) (Bachmann and Nagarajan, 2025;
+Huang et al., 2025a; Welleck et al., 2020), and inference-centric causes (inference-time choices such
+as stochastic decoding)
+(Holtzman et al., 2020; Mallen et al., 2023; Lee et al., 2023; Li et al.,
+2023b). Our perspective is orthogonal to these studies, as we focus on the information perspective
+independent of these practical considerations.
+On the theoretical side, a group of papers (Kalai and Vempala, 2024; Kalai et al., 2025; Mohsin
+et al., 2025; Xu, 2025; Wu et al., 2025; Gumaan, 2025) consider the classification perspective, as
+explained previously. Notably, Kalai and Vempala (2024); Kalai et al. (2025) establish that for
+calibrated models, the generative hallucination rate is inherently lower-bounded by the error rate of
+an induced classifier. This calibration assumption forces the model to assign probability mass to
+unseen potential facts, resulting in a regime that is fundamentally different from our closed-world
+setting. Meanwhile, several other works (Xu et al., 2024; Shi et al., 2025; Banerjee et al., 2024; Suzuki
+et al., 2025; Kalavasis et al., 2025; Charikar and Pabbaraju, 2025) consider LLMs as computable
+functions and discuss how incomputability gives rise to hallucinations. Some other works (Chlon et al.,
+2025; Pan et al., 2025; Shi et al., 2025; Mohsin et al., 2025; Kim, 2025a,b) consider LLMs as lossy
+compressors of knowledge and discuss how the distortion during compression causes hallucinations.
+Additionally, (Karpowicz, 2025) proves a voting-theory-style impossibility result for an LLM to
+eliminate hallucination while maintaining other desirable properties.
+Beyond LLMs, our theory also relates to space lower bounds for static filters3. Carter et al.
+(1978) gave the first space lower bound for one-sided filters in the sparse limit, which was recently
+extended by Li et al. (2023a) to a more general form for nonzero |K|/|U|. Pagh and Rodler (2001)
+lower bounded space usage of two-sided filters which allow false negatives, but left an unspecified
+gap of Θ(1) per key. Hurley and Waldvogel (2007) applied rate-distortion theory to the case of fixed
+|U|/|K|, and gave a mutual-information style space lower bound. These bounds can be recovered as
+special cases of our main result.
+2
+Preliminaries
+We first define membership testers and error metrics.
+Definition 2.1 (Membership tester). Given universe U = [u], key set size n, and two error metric
+functions, a membership tester M is a tuple of two algorithms with shared randomness:
+• InitM, where the tester takes input K and outputs W, a memory state (e.g. model parameters
+for LLMs or data structure contents for filters).
+• QueryM, where the tester takes input i ∈U and the memory state W, and returns a confidence
+score ˆ
+xi ∈[0, 1], indicating its estimate of P[i ∈K].
+Let B(M) = I(W; K) be the memory budget (or memory cost) of M, quantifying how many
+bits of information about K are stored. See Appendix A for further discussion of this quantity. From
+a data structure perspective, this lower-bounds the bits of space that M uses: I(W; K) ≤H(W).
+3Static filters only store a fixed set K. Filters that allow insertion or deletion have an additional space cost. See
+e.g. (Lovett and Porat, 2010; Kuszmaul and Walzer, 2024; Kuszmaul et al., 2025)
+4
+
+Remark 2.2 (Permutation-invariance). To study the memory-error trade-off, it suffices to focus on
+permutation-invariant membership testers. That is, for any permutation π : U →U, any key set K
+of size n, and any i ∈U, the distribution of query outputs is unaffected by the permutation:
+QueryM(i, InitM(K))
+d
+= QueryM π(i), InitM(π(K))
+
+.
+This assumption is standard and without loss of generality: given a membership tester M′, we
+can use M′ to define a permutation-invariant tester M by picking a uniformly random permutation
+σ on U and defining:
+(
+InitM(K) = InitM′(σ(K)),
+QueryM(i, W) = QueryM′(σ(i), W).
+On a uniformly random key set K, the expected error rates (defined below) of M are identical
+to those of M′. Moreover, the distribution of QueryM(i, InitM(K)) depends only on whether i is
+a key or non-key, not on the specific choice of i or K. Throughout the paper, we will assume all
+membership testers are permutation-invariant. While practical LLMs are not permutation-invariant,
+this assumption is a standard tool for analysis, and our lower bounds still apply.
+Definition 2.3 (Query output and error constraints). Let dK, dN : [0, 1] →[0, ∞] be error metrics
+for keys K and non-keys U \ K. On query output ˆ
+x ∈[0, 1], the error on a single key (resp. non-key)
+is dK(ˆ
+x) (resp. dN(ˆ
+x)).
+For permutation-invariant membership tester M, we denote its query output distributions
+on keys and non-keys by µK(M) and µN(M), respectively. We say M achieves error levels εK, εN
+if it satisfies the following constraints:
+E
+ˆ
+X∼µK(M)
+[dK( ˆ
+X)] ≤εK, and
+E
+ˆ
+X∼µN(M)
+[dN( ˆ
+X)] ≤εN.
+Intuitively, the membership tester would try to output high scores for keys and low scores for
+non-keys; the corresponding error metrics dK and dN would then be decreasing and increasing
+functions, respectively.
+As examples of error metrics, for two-sided filters, dK and dN would characterize the FNR and
+FPR of the filter, corresponding to dK(ˆ
+x) = 1 −ˆ
+x and dN(ˆ
+x) = ˆ
+x.
+For factuality estimation on LLMs (Section 4.1), dK and dN characterize the log-loss on a key
+(fact) and a non-key (non-fact), i.e., dK(ˆ
+x) = −ln ˆ
+x, and dN(ˆ
+x) = −ln(1 −ˆ
+x).
+Assumption 2.4 (Assumptions on error metrics). Our main theorems apply to any error metrics
+dK, dN that satisfy the following assumptions.
+We assume that dK, dN are nonnegative and lower semi-continuous on [0, 1], and perfect scores
+have zero error: dK(1) = dN(0) = 0. Additionally, we assume there exists some c ∈[0, 1] achieving
+finite error under both metrics:
+dK(c) < ∞,
+and
+dN(c) < ∞.
+All logarithms in this paper are base-2 unless specified as ln. We use u to denote the universe size
+|U|, and use n to denote the key size |K|. We use P([0, 1]) to denote all Borel probability measures
+on [0, 1].
+5
+
+3
+A Rate-Distortion Theorem for Membership Testers
+In this section, we state and prove our main theorems. Throughout this section, we assume a pair of
+fixed error metrics dK, dN that satisfy Assumption 2.4.
+For any pair of error rates (εK, εN), let CK(εK) and CN(εN) be the feasible regions for query
+output distributions on keys and non-keys, respectively:
+CK(εK) = {µK ∈P([0, 1]) :
+E
+ˆ
+X∼µK
+[dK( ˆ
+X)] ≤εK},
+CN(εN) = {µN ∈P([0, 1]) :
+E
+ˆ
+X∼µN
+[dN( ˆ
+X)] ≤εN}.
+Our first theorem characterizes the memory–error trade-off for membership testers.
+Theorem 3.1. Fix error metrics dK, dN and error rates εK, εN ≥0. Let {nj}, {uj} be sequences
+of natural numbers such that nj →∞and nj/uj →0. For each j, let Mj be a membership tester
+for universe [uj] and key size nj that achieves error rates (εK,j, εN,j) under error metrics dK, dN.
+Suppose the error rates satisfy:
+lim sup
+j→∞
+εK,j ≤εK,
+lim sup
+j→∞
+εN,j ≤εN.
+Then, the asymptotic per-key memory budget of Mj is at least:
+lim inf
+j→∞
+B(Mj)
+nj
+≥
+min
+µK∈CK(εK),µN∈CN(εN) KL(µK∥µN).
+Moreover, there exist sequences {uj}, {nj}, and {Mj} as described above that achieve the memory
+lower bound.
+Our second result states that, when the KL term has unique minimizers, these minimizers define
+the query output distributions of optimal membership tester families.
+Theorem 3.2. Suppose (µ∗
+K, µ∗
+N) ∈CK(εK) × CN(εN) is the unique minimizer of KL(µK∥µN). In
+the setting of Theorem 3.1, if {Mj} is asymptotically optimal, in the sense that
+lim sup
+j→∞
+B(Mj)
+nj
+= KL(µ∗
+K∥µ∗
+N),
+then we must have µK(Mj) →µ∗
+K and µN(Mj) →µ∗
+N in Wasserstein-1 distance.
+Finally, if M is restricted to output values in supp(µ∗
+N) rather than [0, 1], then we can quantify
+how the memory lower bound converges to KL(µ∗
+K∥µ∗
+N) as p →0.
+Theorem 3.3. Let χ2 be the chi-squared divergence. In the setting of Theorem 3.2, suppose µ∗
+N is
+supported on a finite set X and χ2(µ∗
+K∥µ∗
+N) < ∞. For any membership tester M for key size n and
+universe [u] with query outputs restricted to X, if we fix p = n
+u and let n, u →∞, then
+B(M)
+n
+≥KL(µ∗
+K∥µ∗
+N) −χ2(µ∗
+K∥µ∗
+N)
+2 ln 2
+· p + o(p),
+and this bound is achievable.
+6
+
+Proof sketch.
+The starting point is a non-asymptotic information-theoretic lower bound: any
+membership tester inducing query output laws (µK, µN) must use at least Fp = I(X; ˆ
+X)/p bits per
+key up to vanishing terms (Theorem 3.4), where X ∼Bern(p) indicates whether a query is a key
+and ˆ
+X is the tester’s output.
+Minimizing Fp over the feasible sets (distributions µK, µN satisfying error constraints) defines
+the “rate–distortion” function Rp(εK, εN). We show that, for each p, the “rate” Rp is both necessary
+(Theorem 3.6) and sufficient (Theorem 3.7) for achieving the given error level.
+To obtain Theorem 3.1, we then send p →0 and use (semi)continuity of Fp (Theorem 3.5) to show
+Rp(εK, εN) →min KL(µK∥µN). When the KL minimizer is unique, standard compactness plus the
+same semicontinuity argument forces any asymptotically optimal family to have (µK(Mj), µN(Mj))
+converge to (µ∗
+K, µ∗
+N) (Theorem 3.2). Finally, under finite support and finite χ2, a Taylor expansion
+of Fp around p = 0 yields the first-order correction term in Theorem 3.3.
+In the subsections below, we will present the main lemmas that lead to the above theorems.
+Most formal proofs are deferred to Section B.
+3.1
+Non-asymptotic lower bound on memory
+Fix u, n ∈N. We first lower bound the necessary memory budget for achieving output distributions
+µK, µN on key and non-key queries. Consider a random variable X ∼Bern(p), and ˆ
+X defined by
+the conditional distributions:
+ˆ
+X | (X = 1) ∼µK, and
+ˆ
+X | (X = 0) ∼µN.
+In the lemma below, we will use the function
+Fp(µK, µN) = 1
+pI(X; ˆ
+X)
+as a proxy for the per-key memory cost of a membership tester with query output distributions µK
+and µN.
+Lemma 3.4. Let M be a membership tester for key size n in universe [u] with u > n. Let p = n
+u
+and let Fp be as defined above. Then, the memory cost of M is at least:
+B(M)
+n
+≥Fp
+ µK(M), µN(M)
+
+−log(8n)
+2n
+.
+Proof. See Section B.1.
+We now state several technical properties of Fp.
+Lemma 3.5. For p > 0, let Fp(µK, µN) = I(X; ˆ
+X)/p, where X ∼Bern(p), ˆ
+X | (X = 1) ∼µK,
+and ˆ
+X | (X = 0) ∼µN. We also define F0(µK, µN) = KL(µK∥µN). Then, for p ∈[0, 1) and
+(µK, µN) ∈P([0, 1])2:
+1. The function (p, µK, µN) 7→Fp(µK, µN) is jointly lower semi-continuous.
+2. Fp(µK, µN) is continuous in p.
+3. Fp is differentiable in p with
+∂
+∂pFp(µK, µN) = −KL(µN∥pµK+(1−p)µN)
+p2
+whenever p > 0.
+Proof. See Section B.2.
+7
+
+3.2
+Memory-error tradeoff for custom error metrics
+Now we define an analog of the rate-distortion function for membership testing. Fixing dK and dN,
+for each p ∈(0, 1), let Rp(εK, εN) be the minimum memory cost per key for given error constraints:
+Rp(εK, εN) =
+min
+µK∈CK(εK),µN∈CN(εN) Fp(µK, µN),
+where the minimum can be attained since, with respect to the weak-* topology, CK(εK) and CN(εN)
+are closed subsets of P([0, 1]), and Fp is lower semi-continuous in (µK, µN).
+By taking minimum over all (µK, µN) in the feasible region and applying Lemma 3.4, we
+immediately have the following memory lower bound for given error constraints:
+Corollary 3.6. Fix any pair of error metrics dK and dN and error rates εK and εN. Suppose M
+is a membership tester satisfying the error constraints for universe [u] and key sizes n with p = n
+u.
+Then, we have:
+B(M)
+n
+≥Rp(εK, εN) −log(8n)
+2n
+.
+We show that this lower bound is achievable for fixed p.
+Lemma 3.7. Fix any p = n
+u ∈(0, 1) and εK, εN > 0. Then, for all δ > 0, there is a sufficiently
+large n and u such that there exists a membership tester M for universe [u] and key sizes n which
+achieves error rates (εK + δ, εN + δ), and:
+B(M)
+n
+≤Rp(εK, εN) + δ.
+Proof. See Section B.3.
+3.3
+Proofs of main theorems
+Now, Theorem 3.1 follows from the fact that Rp converges to the minimum KL divergence as p →0.
+Proof of Theorem 3.1. First we show lower bound. By Lemma 3.4, for each j, the memory cost of
+Mj satisfies:
+B(Mj)
+nj
+≥Fpj
+ µK(Mj), µN(Mj)
+
+−log(8nj)
+2nj
+.
+Let ℓ= lim infj→∞
+B(Mj)
+nj
+.
+By passing to a subsequence (still denoted by j), we can assume
+B(Mj)/nj →ℓ.
+Let µK,j = µK(Mj) and µN,j = µN(Mj). Since the space of probability measures P([0, 1]) is
+compact under the weak-* topology, there exists a further subsequence (again, denoted by j) such
+that (µK,j, µN,j) converges to some limit (µ∗
+K, µ∗
+N) ∈P([0, 1])2. By the lower semi-continuity of
+Fp(µK, µN) in (p, µK, µN) (Lemma 3.5), and since pj →0, we have:
+ℓ= lim
+j→∞
+B(Mj)
+nj
+≥lim inf
+j→∞Fpj(µK,j, µN,j)
+≥F0(µ∗
+K, µ∗
+N) = KL(µ∗
+K∥µ∗
+N).
+It remains to show that (µ∗
+K, µ∗
+N) is in CK(εK) × CN(εN). By assumption, we have lim sup εK,j ≤
+εK and lim sup εN,j ≤εN. Since the functions dK, dN are LSC, the expected error is lower semicontinuous with respect to the measure by Portmanteau theorem. Thus:
+E
+ˆ
+x∼µ∗
+K
+[dK(ˆ
+x)] ≤lim inf
+j→∞
+E
+ˆ
+x∼µK,j[dK(ˆ
+x)] ≤εK,
+8
+
+which implies µ∗
+K ∈CK(εK), and similarly µ∗
+N ∈CN(εN). This completes the lower bound:
+lim inf
+j→∞
+B(Mj)
+nj
+≥KL(µ∗
+K∥µ∗
+N)
+≥
+min
+µK∈CK(εK),µN∈CN(εN) KL(µK∥µN).
+For achievability, note that Rp(µ∗
+K, µ∗
+N) →KL(µ∗
+K∥µ∗
+N) as p →0 by continuity of Fp in p, as
+shown in Lemma 3.5. By Lemma 3.7, for each p, for sufficiently large n we can find a membership
+tester with error rates arbitrarily close to (εK, εN) and memory usage arbitrarily close to Rp(µ∗
+K, µ∗
+N)
+per key. The desired claim follows by taking pj →0 and taking a sufficiently large nj for each pj.
+Proofs for Theorems 3.2 and 3.3 follow similar arguments and are deferred to Section B.4 and
+B.5 respectively.
+4
+Hallucination on Random Facts
+Fix a universe U of u unstructured potential facts; each i ∈U is a plausible natural-language claim
+(e.g., detailed biographies as in Allen-Zhu and Li (2024)). The set of known facts is the key set
+K ⊆U. In the random-facts regime that motivates our study, K is a subset of size n drawn uniformly
+at random from U. This regime intentionally isolates non-generalizable factual knowledge, forcing
+the LLM to behave like a membership tester for K.
+Consider an LLM that is trained (among other tasks) to distinguish facts in K from all other
+non-facts. Viewing the LLM as a membership tester for K, Init corresponds to training on labeled
+data, and Query corresponds to the inference-time response (or internal evaluation) to a plausible
+claim i ∈U. We study two natural regimes of factuality judgment:
+1. Probability estimation. The LLM generates a confidence score ˆ
+xi ∈[0, 1] as an estimate of
+P[i ∈K].
+2. Binary decision. The LLM (possibly after thresholding or other post-processing) induces a
+binary decision ˆ
+xi ∈{0, 1} indicating whether i is accepted as a fact.
+In both cases, Theorem 3.1 reduces the minimum per-fact memory budget allocated to random
+facts, measured by I(W; K)/n, to a convex optimization problem under the corresponding error
+constraints. We refer to Section A for a detailed discussion of the memory budget in LLMs.
+4.1
+Probability estimation variant
+In this variant, a query i produces a fractional confidence ˆ
+x ∈[0, 1]. Let µK and µN denote the
+distribution of ˆ
+x when i is a fact (i ∈K) or a non-fact (i ∈U \ K), respectively. We measure average
+factuality error by log-loss constraints:
+E
+ˆ
+x∼µK[−ln ˆ
+x] ≤εK,
+E
+ˆ
+x∼µN[−ln(1 −ˆ
+x)] ≤εN,
+where a weighted sum of the two errors corresponds to binary cross-entropy loss. This evaluation
+metric is natural for the practical need to quantify the confidence P[True] of a factual output (Wen
+et al., 2025), and is consistent with proposed training/evaluation methods for studying whether
+LLMs “know what they know”(Kadavath et al., 2022; Cheng et al., 2024).
+Our main conclusion is that, under log-loss, the unique optimal solution is intrinsically asymmetric:
+it drives all facts to a single high-confidence point, while forcing a nonzero fraction of non-facts to
+share the same point.
+9
+
+Theorem 4.1. In the non-trivial regime where εK > 0, εN > 0, and e−εK + e−εN > 1, the unique
+minimizers (µ∗
+K, µ∗
+N) of
+min
+µK,µN KL(µK ∥µN)
+subject to
+E
+ˆ
+x∼µK[−ln ˆ
+x] ≤εK,
+E
+ˆ
+x∼µN[−ln(1 −ˆ
+x)] ≤εN
+are given by
+µ∗
+K = δx∗,
+µ∗
+N = (1 −q∗)δ0 + q∗δx∗,
+where x∗= e−εK and q∗=
+εN
+−ln(1−x∗).
+Figure 1 illustrates the shape of the optimal non-fact distribution in blue. The proof appears
+in Section C. To solve this optimization problem over probability distributions, we use variational
+calculus and verify the KKT conditions.
+Hallucination channel and its cost. The optimal strategy for a given memory budget is to output
+a single high-confidence value x∗on all facts, while assigning the same high-confidence value x∗to a
+q∗fraction of non-facts, forming a “hallucination channel.” These non-facts are indistinguishable
+from facts by any downstream procedure that observes only ˆ
+x. Moreover, the per-key memory lower
+bound simplifies to
+KL(µ∗
+K∥µ∗
+N) = log 1
+q∗.
+Hence, the hallucination probability q∗is solely determined by the memory capacity dedicated to
+storing random facts, regardless of how we trade off the two types of errors.
+Resistance to thresholding. The non-fact loss −ln(1 −ˆ
+x) heavily penalizes large ˆ
+x, so one might
+expect µ∗
+N to spread its mass over smaller or intermediate confidences, enabling hallucination removal
+by thresholding (perhaps at the cost of forgetting some facts). Theorem 4.1 rules this out: on the
+Pareto frontier, non-facts must place an atom at the same x∗used for facts. Thus, a threshold
+that accepts any fact must also accept these hallucinations, and any threshold that rejects any
+hallucination must also reject all facts.
+4.2
+Binary decision variant
+We now consider any binary decision rule on the potential fact universe induced by the LLM. This
+covers thresholding the probability estimation in Section 4.1, as well as any classifier arising from
+generative hallucination probabilities (e.g., in Kalai et al. (2025)). Formally, any such pipeline
+induces a (randomized) decision ˆ
+xi ∈{0, 1} for each i ∈U, indicating either acceptance or rejection.
+We place error constraints on false negative rates (FNR) and false positive rates (FPR):
+E
+ˆ
+x∼µK[1 −ˆ
+x] ≤εK,
+E
+ˆ
+x∼µN[ˆ
+x] ≤εN,
+Remark 4.2. The FNR/FPR error constraints naturally extend to all real-valued scores ˆ
+x ∈[0, 1].
+However, Theorem D.1 shows that for these error constraints, restricting attention to binary outputs
+{0, 1} incurs no loss of optimality in the KL-minimization governing the memory bound.
+Theorem 4.3. In the non-trivial regime where εK, εN ≥0 and εK + εN < 1, the minimizers
+(µ∗
+K, µ∗
+N) of
+min
+µK,µN KL(µK ∥µN)
+subject to
+E
+ˆ
+x∼µK[1 −ˆ
+x] ≤εK,
+E
+ˆ
+x∼µN[ˆ
+x] ≤εN
+10
+
+10−3
+10−1
+Frequency (log)
+(a) λF = 8
+(b) λF = 4
+0
+0.2
+0.4
+0.6
+0.8
+1
+10−3
+10−1
+Confidence Score ˆ
+x
+Frequency (log)
+(c) λF = 1
+0
+0.2
+0.4
+0.6
+0.8
+1
+Confidence Score ˆ
+x
+(d) λF = 0.25
+Facts
+Non-Facts
+Theoretical optimum
+Figure 1: Output distributions on facts vs. non-facts (y-axis is in log-scale) across different choice
+of λF for the model with 15145 parameters (1 per fact). The blue stems indicate the predicted
+memory-optimal atoms for non-facts under the same empirical loss values.
+are given by
+µ∗
+K = Bern(1 −εK),
+µ∗
+N = Bern(εN).
+We defer the full proof to Section D. Intuitively, once we reduce the KL-minimization to binary
+outputs, the resulting two-parameter convex program naturally has unique minimizers when the two
+constraints are tight.
+First-order approximation.
+Since ˆ
+x ∈{0, 1}, we can use Theorem 3.3 and obtain a more
+fine-grained memory bound for small p. Specifically, as p →0, the difference between the memory
+bound and KL term is dominated by
+p
+2 ln 2 · χ2(Bern(1 −εK)∥Bern(εN)).
+No non-trivial “hallucination-free” regime.
+A corollary of our results is that one cannot
+eliminate hallucinations in a large universe without incurring a large cost. Driving hallucinations to
+zero corresponds to εN →0, but then
+KL(Bern(1 −εK) ∥δ0) = ∞
+for every εK < 1.
+Thus, zero FPR is only compatible with the trivial regime that rejects everything (εK = 1), or with
+an unbounded memory budget. Interestingly, this also proves that there is no “reverse Bloom filter”
+which tolerates false negatives but not false positives. As the universe grows to infinity, it is infinitely
+expensive to correctly identify every non-fact.
+Thresholding only moves you along the frontier.
+This memory-error frontier formalizes the
+trade-off between hallucination and over-refusal observed in practice (Cheng et al., 2024; Brahman
+11
+
+0
+0.5
+1
+1.5
+0
+0.2
+0.4
+0.6
+0.8
+1
+1.2
+λF = 8
+λF = 4
+λF = 1
+λF = 0.25
+Non-Facts Loss (ϵN)
+Facts Loss (ϵK)
+Trading off ϵK vs. ϵN
+0.58 param/fact
+1 param/fact
+2.18 params/fact
+1
+2
+3
+4
+bits/Key
+(a) Memory-error frontier vs. different weights.
+0
+0.5
+1
+1.5
+2
+2.5
+3
+3.5
+4
+0
+1
+2
+3
+4
+Theoretical Minimum Bits per Key
+Empirical Bits per Key (KL)
+Theoretical Lower Bound (y = x)
+y=1.12x
+Reference
+(b) KL divergence between empirical distributions vs. minimum information for given loss.
+Figure 2: Effect of different weight λF on fact. Each color represents a different model size. The
+amount of information per key decreases with λF for each model size.
+et al., 2024). Theorem 4.3 is agnostic to how ˆ
+x is produced. Whether the decision is derived from
+a calibrated probability, a raw logit, a log-likelihood ratio, or a multi-stage verification chain that
+outputs a scalar score, the final thresholded mapping is exactly a two-sided filter with some (εK, εN).
+Consequently, no choice of threshold can beat the memory-error frontier: a conservative approach
+to factual answers may reduce εN, but then either the memory budget or εK must increase (more
+forgetting / abstention).
+Relation to Section 4.1.
+In Section 4.1, we show that the perfect solution for probability
+estimation necessitates high-confidence hallucinations. Here, the message is broader and operational:
+once a system is evaluated through any decision rule, it is constrained by the same memory-error
+tradeoff as two-sided filters, regardless of the trained objective.
+Recovering filter space lower bounds.
+By limiting output to {0, 1}, our framework recovers
+previous space lower bounds for filters as special cases. Setting εK = 0, our bound reduces to the
+classical result in Carter et al. (1978):
+KL(δ1 ∥Bern(εN)) = log(1/εN) bits per key.
+Moreover, if p is bounded away from 0, our rate-distortion function Rp(εK, εN) corresponds to the
+fine-grained bound in Li et al. (2023a) for finite universes.
+In the two-sided regime, we settle the gap in Pagh and Rodler (2001), quantifying log(1/εN)+Θ(1)
+as the exact KL divergence value. Finally, our framework generalizes the results in Hurley and
+Waldvogel (2007) by moving from a single Hamming-distortion constraint on a Bernoulli source to
+separate FNR/FPR constraints on fixed composition sources.
+To complete the argument for filters, Appendix D.3 gives an explicit construction of a hash-based
+two-sided filter that achieves the space lower bound up to o(1) bits per key.
+12
+
+4.3
+Experiments
+We show that the predicted distributions in Section 4.1 align with output behaviors in controlled
+synthetic experiments.
+Setup. Let U be the set of all length-15 strings over the 26 English letters (|U| = 2615). We
+draw a key set K ⊆U by sampling n = 15145 strings uniformly at random without replacement. We
+train a 2-layer Transformer with varying parameter count (8767, 15145, and 33085) and analyze
+the distributions of output scores ˆ
+xi when i is a key/non-key. We train with a weighted binary
+cross-entropy loss
+L =
+λF
+λF + 1
+E
+i∼Unif(K)[−ln ˆ
+x(i)]
++
+1
+λF + 1
+E
+i∼Unif(U\K)[−ln(1 −ˆ
+x(i))].
+This loss induces the average log-losses (εK, εN) on facts and non-facts, consistent with the notation
+in Section 4.1. Further details of model and training, as well as extra figures can be found in
+Appendix E.
+Validation of the hallucination channel. Figure 1 plots the empirical distributions of ˆ
+x(i) on
+facts and non-facts under different λF for the model with 15145 parameters. Across all settings, the
+non-fact distribution is not only concentrated near 0; instead, it exhibits a visible high-confidence
+tail overlapping the fact mass, which is especially clear when the fact mass is concentrated. This
+qualitatively matches the hallucination channel predicted by Theorem 4.1: a non-negligible portion
+of non-facts must be mapped into the same high-confidence region as facts. Interestingly, a small λF
+pushes both fact and non-fact distributions to spread out. We attribute this to the expressivity of
+the model architecture and properties of the sigmoid function.
+Quantitative match to the predicted atoms. Beyond the qualitative overlap, the empirical
+modes in Figure 1 are comparable to the atoms (x⋆, q⋆) implied by the theoretical optimizer when
+we plug in the observed losses (εK, εN). We further compute the KL divergence between the binned
+empirical distributions and find that the (discretized) learned distributions (with 50 bins) incur only
+an ≈12% overhead in KL divergence, relative to the information-theoretic lower bound for the given
+error rates (εK, εN) (Figure 2b). We also note that, when the model is tasked solely with memorizing
+random data, our estimation of effective memory is close to 2 bits per parameter, consistent with
+the findings in Allen-Zhu and Li (2025).
+Effect of reweighting facts vs. non-facts. Increasing λF pushes the optimizer to reduce εK
+(higher recall). Consequently, the model sharpens a high-confidence region for facts, and inevitably
+drags a larger fraction of non-facts into the same region, causing a sharp rise in hallucination.
+Figure 2a reports εK, εN, and the corresponding per-key memory lower bound across the weight
+sweep. The heatmap shows a clear diminishing return: past a point, further improving εK requires
+sacrificing εN disproportionately, while the implied information requirement per key decreases—
+aggressive “always-recall” pressure moves the system into an especially hallucination-prone position.
+This suggests that it is advisable to emphasize rejecting non-facts during training – the theoretical
+hallucination probability in Theorem 4.1 is only a function of effective memory budget, but the
+budget itself depends on the training process.
+5
+Acknowledgements
+We thank Aravindan Vijayaraghavan and Clifford Stein for helpful discussions. Anxin Guo is
+partially supported by the National Science Foundation through the NSF grants ECCS-2216970 and
+13
+
+CCF-2154100 through Aravindan Vijayaraghavan. Jingwei Li is partially supported by NSF grant
+CCF-2218677 and ONR grant ONR-13533312 through Clifford Stein.
+14
+
+References
+Alessandro Achille and Stefano Soatto. Emergence of invariance and disentanglement in deep
+representations. Journal of Machine Learning Research, 19(50):1–34, 2018.
+Aisha Alansari and Hamzah Luqman. Large language models hallucination: A comprehensive survey,
+2025. URL https://arxiv.org/abs/2510.06265.
+Zeyuan Allen-Zhu and Yuanzhi Li. Physics of language models: Part 3.1, knowledge storage and
+extraction. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna,
+Austria, July 21-27, 2024. OpenReview.net, 2024. URL https://openreview.net/forum?id=
+5x788rqbcj.
+Zeyuan Allen-Zhu and Yuanzhi Li. Physics of language models: Part 3.3, knowledge capacity
+scaling laws. In The Thirteenth International Conference on Learning Representations, ICLR 2025,
+Singapore, April 24-28, 2025. OpenReview.net, 2025. URL https://openreview.net/forum?id=
+FxNNiUgtfa.
+Pierre Alquier. User-friendly introduction to pac-bayes bounds. arXiv preprint arXiv:2110.11216,
+2021.
+Devansh Arpit, Stanislaw Jastrzebski, Nicolas Ballas, David Krueger, Emmanuel Bengio, Maxinder S.
+Kanwal, Tegan Maharaj, Asja Fischer, Aaron C. Courville, Yoshua Bengio, and Simon LacosteJulien. A closer look at memorization in deep networks. In Doina Precup and Yee Whye Teh, editors,
+Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW,
+Australia, 6-11 August 2017, volume 70 of Proceedings of Machine Learning Research, pages
+233–242. PMLR, 2017. URL http://proceedings.mlr.press/v70/arpit17a.html.
+Gregor Bachmann and Vaishnavh Nagarajan. The pitfalls of next-token prediction, 2025. URL
+https://arxiv.org/abs/2403.06963.
+Sourav Banerjee, Ayushi Agarwal, and Saloni Singla. Llms will always hallucinate, and we need
+to live with this. CoRR, abs/2409.05746, 2024. doi: 10.48550/ARXIV.2409.05746. URL https:
+//doi.org/10.48550/arXiv.2409.05746.
+Emily M. Bender, Timnit Gebru, Angelina McMillan-Major, and Shmargaret Shmitchell. On the
+dangers of stochastic parrots: Can language models be too big? In Madeleine Clare Elish, William
+Isaac, and Richard S. Zemel, editors, FAccT ’21: 2021 ACM Conference on Fairness, Accountability,
+and Transparency, Virtual Event / Toronto, Canada, March 3-10, 2021, pages 610–623. ACM,
+2021. doi: 10.1145/3442188.3445922. URL https://doi.org/10.1145/3442188.3445922.
+Burton H. Bloom. Space/time trade-offs in hash coding with allowable errors. Commun. ACM, 13(7):
+422–426, 1970. doi: 10.1145/362686.362692. URL https://doi.org/10.1145/362686.362692.
+Avrim Blum and John Langford. Pac-mdl bounds. In Learning Theory and Kernel Machines:
+16th Annual Conference on Learning Theory and 7th Kernel Workshop, COLT/Kernel 2003,
+Washington, DC, USA, August 24-27, 2003. Proceedings, pages 344–357. Springer, 2003.
+Faeze Brahman, Sachin Kumar, Vidhisha Balachandran, Pradeep Dasigi, Valentina Pyatkin,
+Abhilasha Ravichander, Sarah Wiegreffe, Nouha Dziri, Khyathi Raghavi Chandu, Jack Hessel, Yulia Tsvetkov, Noah A. Smith, Yejin Choi, and Hanna Hajishirzi.
+The art of saying no: Contextual noncompliance in language models. In Amir Globersons, Lester Mackey,
+15
+
+Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024, 2024.
+URL http://papers.nips.cc/paper_files/paper/2024/hash/
+58e79894267cf72c66202228ad9c6057-Abstract-Datasets_and_Benchmarks_Track.html.
+Gavin Brown, Mark Bun, Vitaly Feldman, Adam D. Smith, and Kunal Talwar. When is memorization of irrelevant training data necessary for high-accuracy learning? In Samir Khuller and
+Virginia Vassilevska Williams, editors, STOC ’21: 53rd Annual ACM SIGACT Symposium on
+Theory of Computing, Virtual Event, Italy, June 21-25, 2021, pages 123–132. ACM, 2021. doi:
+10.1145/3406325.3451131. URL https://doi.org/10.1145/3406325.3451131.
+Yuheng Bu, Shaofeng Zou, and Venugopal V. Veeravalli. Tightening mutual information-based
+bounds on generalization error. IEEE Journal on Selected Areas in Information Theory, 1(1):
+121–130, 2020. doi: 10.1109/JSAIT.2020.2991139.
+Larry Carter, Robert W. Floyd, John Gill, George Markowsky, and Mark N. Wegman. Exact and
+approximate membership testers. In Richard J. Lipton, Walter A. Burkhard, Walter J. Savitch,
+Emily P. Friedman, and Alfred V. Aho, editors, Proceedings of the 10th Annual ACM Symposium
+on Theory of Computing, May 1-3, 1978, San Diego, California, USA, pages 59–65. ACM, 1978.
+doi: 10.1145/800133.804332. URL https://doi.org/10.1145/800133.804332.
+Olivier Catoni. Pac-bayesian supervised classification: the thermodynamics of statistical learning.
+arXiv preprint arXiv:0712.0248, 2007.
+Moses Charikar and Chirag Pabbaraju. Exploring facets of language generation in the limit. In Nika
+Haghtalab and Ankur Moitra, editors, The Thirty Eighth Annual Conference on Learning Theory,
+30-4 July 2025, Lyon, France, volume 291 of Proceedings of Machine Learning Research, pages
+854–887. PMLR, 2025. URL https://proceedings.mlr.press/v291/charikar25a.html.
+Qinyuan Cheng, Tianxiang Sun, Xiangyang Liu, Wenwei Zhang, Zhangyue Yin, Shimin Li, Linyang
+Li, Zhengfu He, Kai Chen, and Xipeng Qiu. Can AI assistants know what they don’t know? In
+Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July
+21-27, 2024. OpenReview.net, 2024. URL https://openreview.net/forum?id=girxGkdECL.
+Leon Chlon, Ahmed Karim, and Maggie Chlon. Predictable compression failures: Why language
+models actually hallucinate. arXiv preprint arXiv:2509.11208, 2025.
+Thomas M. Cover and Joy A. Thomas. Elements of Information Theory. Wiley, 2001. ISBN
+9780471062592. doi: 10.1002/0471200611. URL https://doi.org/10.1002/0471200611.
+Imre Csiszár and János Körner. Information theory: coding theorems for discrete memoryless systems.
+Cambridge University Press, 2011.
+Martin Dietzfelbinger and Rasmus Pagh. Succinct data structures for retrieval and approximate
+membership (extended abstract). In Luca Aceto, Ivan Damgård, Leslie Ann Goldberg, Magnús M. Halldórsson, Anna Ingólfsdóttir, and Igor Walukiewicz, editors, Automata, Languages and
+Programming, 35th International Colloquium, ICALP 2008, Reykjavik, Iceland, July 7-11, 2008,
+Proceedings, Part I: Tack A: Algorithms, Automata, Complexity, and Games, volume 5125 of Lecture
+Notes in Computer Science, pages 385–396. Springer, 2008. doi: 10.1007/978-3-540-70575-8\_32.
+URL https://doi.org/10.1007/978-3-540-70575-8_32.
+16
+
+Jesse Dodge, Maarten Sap, Ana Marasovic, William Agnew, Gabriel Ilharco, Dirk Groeneveld,
+Margaret Mitchell, and Matt Gardner. Documenting large webtext corpora: A case study on
+the colossal clean crawled corpus. In Marie-Francine Moens, Xuanjing Huang, Lucia Specia, and
+Scott Wen-tau Yih, editors, Proceedings of the 2021 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2021, Virtual Event / Punta Cana, Dominican Republic, 7-11
+November, 2021, pages 1286–1305. Association for Computational Linguistics, 2021. doi: 10.18653/
+V1/2021.EMNLP-MAIN.98. URL https://doi.org/10.18653/v1/2021.emnlp-main.98.
+Chris Dyer, Adhiguna Kuncoro, Miguel Ballesteros, and Noah A. Smith. Recurrent neural network
+grammars. In Kevin Knight, Ani Nenkova, and Owen Rambow, editors, Proceedings of the 2016
+Conference of the North American Chapter of the Association for Computational Linguistics:
+Human Language Technologies, pages 199–209, San Diego, California, June 2016. Association
+for Computational Linguistics. doi: 10.18653/v1/N16-1024. URL https://aclanthology.org/
+N16-1024/.
+Gintare Karolina Dziugaite and Daniel M. Roy. Computing nonvacuous generalization bounds for
+deep (stochastic) neural networks with many more parameters than training data. In Gal Elidan,
+Kristian Kersting, and Alexander Ihler, editors, Proceedings of the Thirty-Third Conference on
+Uncertainty in Artificial Intelligence, UAI 2017, Sydney, Australia, August 11-15, 2017. AUAI
+Press, 2017. URL http://auai.org/uai2017/proceedings/papers/173.pdf.
+Gintare Karolina Dziugaite and Daniel M. Roy. Data-dependent pac-bayes priors via differential
+privacy. In Samy Bengio, Hanna M. Wallach, Hugo Larochelle, Kristen Grauman, Nicolò CesaBianchi, and Roman Garnett, editors, Advances in Neural Information Processing Systems 31:
+Annual Conference on Neural Information Processing Systems 2018, NeurIPS 2018, December
+3-8, 2018, Montréal, Canada, pages 8440–8450, 2018. URL https://proceedings.neurips.cc/
+paper/2018/hash/9a0ee0a9e7a42d2d69b8f86b3a0756b1-Abstract.html.
+Vitaly Feldman. Does learning require memorization? a short tale about a long tail. In Proceedings
+of the 52nd annual ACM SIGACT symposium on theory of computing, pages 954–959, 2020.
+Vitaly Feldman and Chiyuan Zhang. What neural networks memorize and why: Discovering the
+long tail via influence estimation. In Hugo Larochelle, Marc’Aurelio Ranzato, Raia Hadsell,
+Maria-Florina Balcan, and Hsuan-Tien Lin, editors, Advances in Neural Information Processing
+Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020,
+December 6-12, 2020, virtual, 2020. URL https://proceedings.neurips.cc/paper/2020/hash/
+1e14bfe2714193e7af5abc64ecbd6b46-Abstract.html.
+Vitaly Feldman, Guy Kornowski, and Xin Lyu. Trade-offs in data memorization via strong data
+processing inequalities. In Nika Haghtalab and Ankur Moitra, editors, The Thirty Eighth Annual
+Conference on Learning Theory, 30-4 July 2025, Lyon, France, volume 291 of Proceedings of
+Machine Learning Research, pages 1935–1973. PMLR, 2025. URL https://proceedings.mlr.
+press/v291/feldman25a.html.
+Zixuan Gong, Shijia Li, Yong Liu, and Jiaye Teng. Disentangling feature structure: A mathematically
+provable two-stage training dynamics in transformers. arXiv preprint arXiv:2502.20681, 2025.
+Peter Gr"unwald and Teemu Roos. Minimum description length revisited. International journal of
+mathematics for industry, 11(01):1930001, 2019.
+17
+
+Peter Grunwald, Thomas Steinke, and Lydia Zakynthinou. Pac-bayes, mac-bayes and conditional
+mutual information: Fast rate bounds that handle general vc classes. In Conference on Learning
+Theory, pages 2217–2247. PMLR, 2021.
+Peter D Gr"unwald. The minimum description length principle. MIT press, 2007.
+Esmail Gumaan. Theoretical foundations and mitigation of hallucination in large language models,
+2025. URL https://arxiv.org/abs/2507.22915.
+Fredrik Hellstr"om, Giuseppe Durisi, Benjamin Guedj, and Maxim Raginsky. Generalization bounds:
+Perspectives from information theory and pac-bayes. Foundations and Trends in Machine Learning,
+18(1):1–223, 2025.
+Ari Holtzman, Jan Buys, Li Du, Maxwell Forbes, and Yejin Choi. The curious case of neural text
+degeneration. In 8th International Conference on Learning Representations, ICLR 2020, Addis
+Ababa, Ethiopia, April 26-30, 2020. OpenReview.net, 2020. URL https://openreview.net/
+forum?id=rygGQyrFvH.
+Lei Huang, Xiaocheng Feng, Weitao Ma, Yuchun Fan, Xiachong Feng, Yuxuan Gu, Yangfan Ye,
+Liang Zhao, Weihong Zhong, Baoxin Wang, Dayong Wu, Guoping Hu, Lingpeng Kong, Tong
+Xiao, Ting Liu, and Bing Qin. Alleviating hallucinations from knowledge misalignment in large
+language models via selective abstention learning. In Wanxiang Che, Joyce Nabende, Ekaterina
+Shutova, and Mohammad Taher Pilehvar, editors, Proceedings of the 63rd Annual Meeting of the
+Association for Computational Linguistics (Volume 1: Long Papers), ACL 2025, Vienna, Austria,
+July 27 - August 1, 2025, pages 24564–24579. Association for Computational Linguistics, 2025a.
+URL https://aclanthology.org/2025.acl-long.1199/.
+Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian Wang, Qianglong
+Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, and Ting Liu. A survey on hallucination in large
+language models: Principles, taxonomy, challenges, and open questions. ACM Trans. Inf. Syst.,
+43(2):42:1–42:55, 2025b. doi: 10.1145/3703155. URL https://doi.org/10.1145/3703155.
+Yizhan Huang, Zhe Yang, Meifang Chen, Jianping Zhang, and Michael R. Lyu. Entropy-memorization
+law: Evaluating memorization difficulty of data in llms. CoRR, abs/2507.06056, 2025c. doi:
+10.48550/ARXIV.2507.06056. URL https://doi.org/10.48550/arXiv.2507.06056.
+Paul Hurley and Marcel Waldvogel. Bloom filters: One size fits all? In 32nd Annual IEEE Conference
+on Local Computer Networks (LCN 2007), 15-18 October 2007, Clontarf Castle, Dublin, Ireland,
+Proceedings, pages 183–190. IEEE Computer Society, 2007. doi: 10.1109/LCN.2007.17. URL
+https://doi.org/10.1109/LCN.2007.17.
+Ziwei Ji, Nayeon Lee, Rita Frieske, Tiezheng Yu, Dan Su, Yan Xu, Etsuko Ishii, Yejin Bang, Andrea
+Madotto, and Pascale Fung. Survey of hallucination in natural language generation. ACM
+Comput. Surv., 55(12):248:1–248:38, 2023. doi: 10.1145/3571730. URL https://doi.org/10.
+1145/3571730.
+Saurav Kadavath, Tom Conerly, Amanda Askell, Tom Henighan, Dawn Drain, Ethan Perez, Nicholas
+Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli Tran-Johnson, Scott Johnston, Sheer El Showk,
+Andy Jones, Nelson Elhage, Tristan Hume, Anna Chen, Yuntao Bai, Sam Bowman, Stanislav Fort,
+Deep Ganguli, Danny Hernandez, Josh Jacobson, Jackson Kernion, Shauna Kravec, Liane Lovitt,
+Kamal Ndousse, Catherine Olsson, Sam Ringer, Dario Amodei, Tom Brown, Jack Clark, Nicholas
+18
+
+Joseph, Ben Mann, Sam McCandlish, Chris Olah, and Jared Kaplan. Language models (mostly)
+know what they know. CoRR, abs/2207.05221, 2022. doi: 10.48550/ARXIV.2207.05221. URL
+https://doi.org/10.48550/arXiv.2207.05221.
+Adam Tauman Kalai and Santosh S. Vempala. Calibrated language models must hallucinate. In Bojan
+Mohar, Igor Shinkar, and Ryan O’Donnell, editors, Proceedings of the 56th Annual ACM Symposium
+on Theory of Computing, STOC 2024, Vancouver, BC, Canada, June 24-28, 2024, pages 160–171.
+ACM, 2024. doi: 10.1145/3618260.3649777. URL https://doi.org/10.1145/3618260.3649777.
+Adam Tauman Kalai, Ofir Nachum, Santosh S. Vempala, and Edwin Zhang.
+Why language
+models hallucinate. CoRR, abs/2509.04664, 2025. doi: 10.48550/ARXIV.2509.04664. URL
+https://doi.org/10.48550/arXiv.2509.04664.
+Alkis Kalavasis, Anay Mehrotra, and Grigoris Velegkas. On the limits of language generation:
+Trade-offs between hallucination and mode-collapse. In Michal Koucký and Nikhil Bansal, editors,
+Proceedings of the 57th Annual ACM Symposium on Theory of Computing, STOC 2025, Prague,
+Czechia, June 23-27, 2025, pages 1732–1743. ACM, 2025. doi: 10.1145/3717823.3718108. URL
+https://doi.org/10.1145/3717823.3718108.
+Michał P. Karpowicz. On the fundamental impossibility of hallucination control in large language
+models, 2025. URL https://arxiv.org/abs/2506.06382.
+Myung Kim. Hallucination as an inevitable byproduct of intelligence in large language models (a
+theoretical examination of the compression–generalization–hallucination triad). 2025a.
+Myung Ho Kim. Hallucination-informed intelligence: The limits of lossless abstraction in large
+language models. 2025b.
+Matt J Kusner, Brooks Paige, and José Miguel Hernández-Lobato. Grammar variational autoencoder.
+In International conference on machine learning, pages 1945–1954. PMLR, 2017.
+William Kuszmaul and Stefan Walzer. Space lower bounds for dynamic filters and value-dynamic
+retrieval. In Bojan Mohar, Igor Shinkar, and Ryan O’Donnell, editors, Proceedings of the 56th
+Annual ACM Symposium on Theory of Computing, STOC 2024, Vancouver, BC, Canada, June
+24-28, 2024, pages 1153–1164. ACM, 2024. doi: 10.1145/3618260.3649649. URL https://doi.
+org/10.1145/3618260.3649649.
+William Kuszmaul, Jingxun Liang, and Renfei Zhou.
+Fingerprint filters are optimal.
+CoRR,
+abs/2510.18129, 2025. doi: 10.48550/ARXIV.2510.18129. URL https://doi.org/10.48550/
+arXiv.2510.18129.
+Nayeon Lee, Wei Ping, Peng Xu, Mostofa Patwary, Pascale Fung, Mohammad Shoeybi, and Bryan
+Catanzaro. Factuality enhanced language models for open-ended text generation, 2023. URL
+https://arxiv.org/abs/2206.04624.
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal,
+Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe
+Kiela. Retrieval-augmented generation for knowledge-intensive NLP tasks. In Hugo Larochelle,
+Marc’Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan, and Hsuan-Tien Lin, editors, Advances
+in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing
+Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual, 2020. URL https://proceedings.
+neurips.cc/paper/2020/hash/6b493230205f780e1bc26945df7481e5-Abstract.html.
+19
+
+Haoyu Li, Liuhui Wang, Qizhi Chen, Jianan Ji, Yuhan Wu, Yikai Zhao, Tong Yang, and Aditya
+Akella. Chainedfilter: Combining membership filters by chain rule. Proc. ACM Manag. Data, 1
+(4):234:1–234:27, 2023a. doi: 10.1145/3626721. URL https://doi.org/10.1145/3626721.
+Xiang Lisa Li, Ari Holtzman, Daniel Fried, Percy Liang, Jason Eisner, Tatsunori Hashimoto, Luke
+Zettlemoyer, and Mike Lewis. Contrastive decoding: Open-ended text generation as optimization.
+In Anna Rogers, Jordan L. Boyd-Graber, and Naoaki Okazaki, editors, Proceedings of the 61st
+Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL
+2023, Toronto, Canada, July 9-14, 2023, pages 12286–12312. Association for Computational
+Linguistics, 2023b. doi: 10.18653/V1/2023.ACL-LONG.687. URL https://doi.org/10.18653/
+v1/2023.acl-long.687.
+Sanae Lotfi, Marc Anton Finzi, Yilun Kuang, Tim G. J. Rudner, Micah Goldblum, and Andrew Gordon Wilson. Non-vacuous generalization bounds for large language models. In Forty-first
+International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024.
+OpenReview.net, 2024. URL https://openreview.net/forum?id=6Kg9p8URlj.
+Shachar Lovett and Ely Porat. A lower bound for dynamic approximate membership data structures.
+In 51th Annual IEEE Symposium on Foundations of Computer Science, FOCS 2010, October
+23-26, 2010, Las Vegas, Nevada, USA, pages 797–804. IEEE Computer Society, 2010.
+doi:
+10.1109/FOCS.2010.81. URL https://doi.org/10.1109/FOCS.2010.81.
+David G Luenberger. Optimization by vector space methods. John Wiley & Sons, 1997.
+Alex Mallen, Akari Asai, Victor Zhong, Rajarshi Das, Daniel Khashabi, and Hannaneh Hajishirzi.
+When not to trust language models: Investigating effectiveness of parametric and non-parametric
+memories. In Anna Rogers, Jordan L. Boyd-Graber, and Naoaki Okazaki, editors, Proceedings of
+the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+ACL 2023, Toronto, Canada, July 9-14, 2023, pages 9802–9822. Association for Computational
+Linguistics, 2023. doi: 10.18653/V1/2023.ACL-LONG.546. URL https://doi.org/10.18653/
+v1/2023.acl-long.546.
+David A McAllester. Pac-bayesian model averaging. In Proceedings of the twelfth annual conference
+on Computational learning theory, pages 164–170, 1999.
+David A McAllester. Pac-bayesian stochastic model selection. Machine Learning, 51(1):5–21, 2003.
+Paul Milgrom and Ilya Segal. Envelope theorems for arbitrary choice sets. Econometrica, 70(2):
+583–601, 2002.
+Muhammad Ahmed Mohsin, Muhammad Umer, Ahsan Bilal, Zeeshan Memon, Muhammad Ibtsaam
+Qadir, Sagnik Bhattacharya, Hassan Rizwan, Abhiram R Gorle, Maahe Zehra Kazmi, Ayesha
+Mohsin, et al. On the fundamental limits of llms at scale. arXiv preprint arXiv:2511.12869, 2025.
+Rasmus Pagh and Flemming Friche Rodler. Lossy dictionaries. In Friedhelm Meyer auf der Heide,
+editor, Algorithms - ESA 2001, 9th Annual European Symposium, Aarhus, Denmark, August 28-31,
+2001, Proceedings, volume 2161 of Lecture Notes in Computer Science, pages 300–311. Springer,
+2001. doi: 10.1007/3-540-44676-1\_25. URL https://doi.org/10.1007/3-540-44676-1_25.
+Zhixuan Pan, Shaowen Wang, and Jian Li. Understanding LLM behaviors via compression: Data
+generation, knowledge acquisition and scaling laws. CoRR, abs/2504.09597, 2025. doi: 10.48550/
+ARXIV.2504.09597. URL https://doi.org/10.48550/arXiv.2504.09597.
+20
+
+Michal Perelkiewicz and Rafal Poswiata.
+A review of the challenges with massive web-mined
+corpora used in large language models pre-training. In Leszek Rutkowski, Rafal Scherer, Marcin
+Korytkowski, Witold Pedrycz, Ryszard Tadeusiewicz, and Jacek M. Zurada, editors, Artificial
+Intelligence and Soft Computing - 23rd International Conference, ICAISC 2024, Zakopane, Poland,
+June 16-20, 2024, Proceedings, Part III, volume 15166 of Lecture Notes in Computer Science,
+pages 153–163. Springer, 2024. doi: 10.1007/978-3-031-81596-6\_14. URL https://doi.org/10.
+1007/978-3-031-81596-6_14.
+María Pérez-Ortiz, Omar Rivasplata, John Shawe-Taylor, and Csaba Szepesvári. Tighter risk
+certificates for neural networks.
+J. Mach. Learn. Res., 22:227:1–227:40, 2021.
+URL https:
+//jmlr.org/papers/v22/20-879.html.
+Yury Polyanskiy and Yihong Wu. Information theory: From coding to learning. Cambridge university
+press, 2025.
+Ely Porat.
+An optimal bloom filter replacement based on matrix solving.
+In Anna E. Frid,
+Andrey Morozov, Andrey Rybalchenko, and Klaus W. Wagner, editors, Computer Science -
+Theory and Applications, Fourth International Computer Science Symposium in Russia, CSR
+2009, Novosibirsk, Russia, August 18-23, 2009. Proceedings, volume 5675 of Lecture Notes in
+Computer Science, pages 263–273. Springer, 2009. doi: 10.1007/978-3-642-03351-3\_25. URL
+https://doi.org/10.1007/978-3-642-03351-3_25.
+Jorma Rissanen. Modeling by shortest data description. Automatica, 14(5):465–471, 1978.
+Quan Shi, Wang Xi, Zenghui Ding, Jianqing Gao, and Xianjun Yang. Hallucination as a computational
+boundary: A hierarchy of inevitability and the oracle escape. CoRR, abs/2508.07334, 2025. doi:
+10.48550/ARXIV.2508.07334. URL https://doi.org/10.48550/arXiv.2508.07334.
+Thomas Steinke and Lydia Zakynthinou. Reasoning about generalization via conditional mutual
+information. In Conference on Learning Theory, pages 3437–3452. PMLR, 2020.
+Atsushi Suzuki, Yulan He, Feng Tian, and Zhongyuan Wang. Hallucinations are inevitable but
+statistically negligible. CoRR, abs/2502.12187, 2025. doi: 10.48550/ARXIV.2502.12187. URL
+https://doi.org/10.48550/arXiv.2502.12187.
+Sean Welleck, Ilia Kulikov, Stephen Roller, Emily Dinan, Kyunghyun Cho, and Jason Weston.
+Neural text generation with unlikelihood training. In 8th International Conference on Learning
+Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net, 2020.
+URL https://openreview.net/forum?id=SJeYe0NtvH.
+Bingbing Wen, Jihan Yao, Shangbin Feng, Chenjun Xu, Yulia Tsvetkov, Bill Howe, and Lucy Lu
+Wang. Know your limits: A survey of abstention in large language models. Trans. Assoc. Comput.
+Linguistics, 13:529–556, 2025. doi: 10.1162/TACL\_A\_00754. URL https://doi.org/10.
+1162/tacl_a_00754.
+Paul L Williams and Randall D Beer. Nonnegative decomposition of multivariate information. arXiv
+preprint arXiv:1004.2515, 2010.
+Changlong Wu, Ananth Grama, and Wojciech Szpankowski. No free lunch: Fundamental limits
+of learning non-hallucinating generative models. In The Thirteenth International Conference on
+Learning Representations, ICLR 2025, Singapore, April 24-28, 2025. OpenReview.net, 2025. URL
+https://openreview.net/forum?id=OwNoTs2r8e.
+21
+
+Aolin Xu and Maxim Raginsky. Information-theoretic analysis of generalization capability of learning
+algorithms. Advances in neural information processing systems, 30, 2017.
+Bowen Xu. Hallucination is inevitable for llms with the open world assumption. arXiv preprint
+arXiv:2510.05116, 2025.
+Ziwei Xu, Sanjay Jain, and Mohan S. Kankanhalli. Hallucination is inevitable: An innate limitation
+of large language models. CoRR, abs/2401.11817, 2024. doi: 10.48550/ARXIV.2401.11817. URL
+https://doi.org/10.48550/arXiv.2401.11817.
+Runchuan Zhu, Xinke Jiang, Jiang Wu, Zhipeng Ma, Jiahe Song, Fengshuo Bai, Dahua Lin, Lijun
+Wu, and Conghui He. GRAIT: gradient-driven refusal-aware instruction tuning for effective
+hallucination mitigation. In Luis Chiruzzo, Alan Ritter, and Lu Wang, editors, Findings of
+the Association for Computational Linguistics: NAACL 2025, Albuquerque, New Mexico, USA,
+April 29 - May 4, 2025, pages 4006–4021. Association for Computational Linguistics, 2025.
+doi: 10.18653/V1/2025.FINDINGS-NAACL.223. URL https://doi.org/10.18653/v1/2025.
+findings-naacl.223.
+22
+
+A
+Detailed Discussion of the Information Budget for Random Facts
+We provide a self-contained argument in support of our modeling choice: namely, that the effective
+memory budget available for storing random facts is orders of magnitude smaller than the raw
+parameter count.
+A.1
+Setup: random facts, training data, and learned weights
+We model LLM training via a Markov chain relating several random variables. Let K denote a
+set of random facts (e.g., a specific list of biographies) drawn from a large universe of potential
+facts. Let the tuple (Θ, K) denote a “world state” that parameterizes the training data generation
+process. Let Z denote the training data, and let W denote the learned weights obtained by applying
+a randomized training algorithm to Z. This induces the Markov chain:
+(Θ, K) →Z →W.
+(1)
+Our goal is to upper-bound I(W; K), the mutual information between the learned weights W
+and the random facts K. This mutual information, which indicates how much the model memorizes
+K, corresponds to the “bits of memory” discussed in the main body.
+We present two complementary arguments. First, regularization techniques and learning-theoretic
+pressures limit pure memorization. Second, much of the model’s effective capacity is “crowded out”
+by structured knowledge, leaving little budget for unstructured random facts.
+A.2
+Regularization limits memorization
+By the data processing inequality, we have I(W; K, Θ) ≤I(W; Z); moreover, standard compressionand generalization-based perspectives suggest that I(W; Z) can be far smaller than the raw parameter
+count.
+Some of the most established theories of generalization in deep learning include the minimum
+description length (MDL) principle (Rissanen, 1978; Gr"unwald, 2007; Gr"unwald and Roos, 2019),
+PAC-Bayes (McAllester, 1999, 2003; Catoni, 2007; Alquier, 2021), and mutual-information generalization bounds (Xu and Raginsky, 2017; Bu et al., 2020; Steinke and Zakynthinou, 2020). These
+ideas are interconnected (Blum and Langford, 2003; Achille and Soatto, 2018; Hellstr"om et al.,
+2025; Grunwald et al., 2021), and they all roughly establish that limited memorization of training
+data is a key factor in generalization.
+Their bounds all relate to the quantity I(W; Z), the mutual information between the weights W
+and the training data Z.
+• Mutual-information bounds directly connect the expected generalization error to variants of
+I(W; Z).
+• PAC-Bayes bounds advocate controlling KL(QZ∥P), where P is some data-independent prior
+over W such as a standard Gaussian, and QZ is the distribution of W after training on data Z.
+This relates to mutual information via I(W; Z) ≤EZ[KL(QZ∥P)], where equality is obtained
+iff P is the marginal distribution of W induced by the learning algorithm and Z.
+• MDL principle is based on minimizing the description length of W (while keeping the training
+error small), which is often equivalent to minimizing KL(QZ∥P), since the latter is the extra
+bits needed to describe W beyond the prior P.
+23
+
+These theories posit that generalization is closely tied to controlling memorization, as quantified
+by I(W; Z). In practice, I(W; Z) is shaped by the implicit bias of common regularization mechanisms
+(e.g., mini-batch SGD, weight decay, dropout, and early stopping) and by the preference for flat
+minima. If this line of reasoning is correct, then we expect training to reduce I(W; Z) whenever
+doing so does not significantly increase the training loss.
+The above theories have also given rise to a series of non-vacuous generalization bounds for deep
+networks (Dziugaite and Roy, 2017, 2018; Pérez-Ortiz et al., 2021) and language models (Lotfi et al.,
+2024). These empirical bounds are derived via quantizing and compressing the model parameters
+W, and then applying MDL/PAC-Bayes bounds. If these compressed networks maintain the same
+performance on the training data Z, then these studies provide a strong argument that I(W; Z) is
+indeed small.
+It is also worth noting that a line of work (Feldman, 2020; Feldman and Zhang, 2020; Brown et al.,
+2021; Feldman et al., 2025) argues that memorization of samples (and even noise) is necessary for
+generalization in certain cases. Our framework complements this perspective: limiting memorization
+via (implicit or explicit) regularization, while intended to filter out noise, also inevitably excludes
+incompressible long-tail random facts. Under an insufficient memory budget, our theory predicts
+that the model is forced to hallucinate as the information-theoretically optimal response.
+A.3
+Structured vs. random facts: a formal tradeoff
+We now formalize the intuition that “structured knowledge” and “random facts” compete for the
+same limited information budget in W, and that structured knowledge often gets prioritized.
+Decomposition.
+Suppose that the world is parameterized by random variables (Θ, K), where Θ
+represents structured components (e.g., linguistic syntax, logical rules, universal regularities) and K
+represents random facts. We assume that K is independent of Θ (so I(K; Θ) = 0).
+This decomposition aligns with the Syntax–Knowledge generative framework recently
+proposed by (Pan et al., 2025), who model language generation as a hierarchical process combining a
+parametric syntax model with a non-parametric, long-tail knowledge model. Similar distinctions have
+also been explored in prior literature to explain learning dynamics, such as the disentanglement of
+syntax and semantics (Gong et al., 2025) and the separation of grammatical structure from content
+in generative models (Dyer et al., 2016; Kusner et al., 2017).
+Budget Splitting Argument.
+Information theory dictates that these two components compete
+for the model’s finite capacity. If we assume K is independent of Θ, then a standard decomposition
+of multivariate information (Williams and Beer, 2010) gives:
+I(W; K, Θ) = I(W; Θ) + I(W; K | Θ)
+= I(W; Θ) + H(K | Θ)
+|
+{z
+}
+=H(K)
+−H(K | W, Θ)
+= I(W; Θ) + H(K) −H(K | W) + H(K | W) −H(K | W, Θ)
+= I(W; Θ) + I(W; K) + I(K; Θ | W)
+|
+{z
+}
+≥0
+.
+If the total effective capacity I(Θ, K; W) is bounded, this equality implies a tradeoff:
+I(K; W)
+|
+{z
+}
+Capacity for random facts
+≤I(Θ, K; W)
+|
+{z
+}
+Total Budget
+−
+I(Θ; W)
+|
+{z
+}
+Capacity used for structure
+.
+24
+
+Consequently, any mechanism that increases I(Θ; W)—i.e., learning more structure—necessarily
+reduces the remaining budget available for encoding the random residual K.
+Prioritized Learning Dynamics.
+Crucially, this is not just a static tradeoff but a dynamic
+one where Θ takes precedence.
+(Pan et al., 2025) demonstrate theoretically (via Kolmogorov
+Structure Functions) and empirically that LLMs exhibit frequency-dependent learning: they prioritize
+compressing pervasive syntactic structures (Θ) before acquiring rarer factual knowledge (K). This
+observation is consistent with the two-stage training dynamics of Transformers (Gong et al., 2025), as
+well as the empirical difficulty for trained models to recall high-entropy facts compared to structured
+knowledge (Huang et al., 2025c). Arpit et al. (2017) also concluded that regularized SGD for deep
+networks would prioritize learning low-entropy “simpler” samples over high-entropy noise.
+Because Θ corresponds to high-frequency patterns that offer the greatest training loss reduction,
+real-world models “spend” their information budget on Θ first. Random facts K, which often appear
+as incompressible noise to a capacity-constrained model (Pan et al., 2025), are relegated to the
+residual information budget. This justifies our focus on bounding I(K; W): it is the marginal
+capacity left for the long tail of world knowledge after the model has learned the essential structures
+of the world.
+B
+Proofs for Section 3
+B.1
+Proof of Lemma 3.4
+For completeness, we first prove the lemma below.
+Lemma B.1. Let X be a discrete random variable with H(X) < ∞and let Y be any random
+variable. Then, the conditional entropy H(X | Y ) is concave in the joint distribution of (X, Y ).
+Proof. Let P0 and P1 be two joint distributions on X ×Y, and let Pλ = λP1 +(1−λ)P0 for λ ∈[0, 1].
+We choose a reference measure ν on Y (e.g., the sum of marginals of P0 and P1) such that the
+joint distributions can be described by densities pi(x, y) with respect to the product of the counting
+measure on X and ν. Let pi(y) = P
+x∈X pi(x, y) denote the marginal density of Y .
+The conditional entropy can be written as:
+H(X|Y ) =
+X
+x∈X
+Z
+p(x, y) log p(y)
+p(x, y) dν(y).
+Consider the function f(u, v) = u log(v/u) for u, v ≥0. This function is the perspective transform of
+the concave function g(t) = −t log t, given by f(u, v) = vg(u/v). Since the perspective of a concave
+function is jointly concave, f(u, v) is jointly concave in (u, v).
+For the mixture Pλ, the densities are linear combinations:
+pλ(x, y) = λp1(x, y) + (1 −λ)p0(x, y),
+pλ(y) = λp1(y) + (1 −λ)p0(y).
+By the joint concavity of f:
+f(pλ(x, y), pλ(y)) ≥λf(p1(x, y), p1(y)) + (1 −λ)f(p0(x, y), p0(y)).
+Summing over x and integrating over y preserves this inequality, yielding:
+HPλ(X|Y ) ≥λHP1(X|Y ) + (1 −λ)HP0(X|Y ).
+This proves the concavity.
+25
+
+Now we restate and prove Lemma 3.4.
+Lemma B.2. Let M be a membership tester for key size n in universe [u] with u > n. Let p = n
+u
+and let Fp be as defined above. Then, the memory cost of M is at least:
+B(M)
+n
+≥Fp
+ µK(M), µN(M)
+
+−log(8n)
+2n
+.
+Proof. We will apply the data processing inequality to lower bound the entropy of W as a random
+variable, hence lower-bounding the memory usage of M. Let K be uniformly randomly sampled
+from all subsets of U = [u] of size n. Define random variables Xi = 1 {i ∈K} to be the membership
+status for i ∈U, and define
+ˆ
+Xi = QueryM(i, InitM(K))
+to be the answer to the membership query, treated as the “reconstructed” membership information.
+Then, by the data processing inequality we have
+B(M) = I(K; W) ≥I(Xu; ˆ
+Xu),
+where Xu and ˆ
+Xu denote the length-u vector of Xi’s and ˆ
+Xi’s, respectively. Because Xu is discrete,
+we can write the mutual information as I(Xu; ˆ
+Xu) = H(Xu) −H(Xu| ˆ
+Xu).
+Let I ∼Unif([u]) be a uniformly random element, then by definition we have
+I(XI; ˆ
+XI) = p · Fp
+ µK(M), µN(M)
+
+.
+We now relate the block mutual information I(Xu; ˆ
+Xu) to the single-letter mutual information
+I(XI; ˆ
+XI). First, by the chain rule for entropy and the fact that conditioning reduces entropy:
+H(Xu| ˆ
+Xu) =
+u
+X
+i=1
+H(Xi| ˆ
+Xu, X1, . . . , Xi−1)
+≤
+u
+X
+i=1
+H(Xi| ˆ
+Xi).
+To lower bound the average conditional entropy 1
+u
+Pu
+i=1 H(Xi| ˆ
+Xi), we use the fact that conditional
+entropy H(X|Y ) is a concave function in the joint distribution of (X, Y ). Since the distribution of
+(XI, ˆ
+XI) is the average of the distributions of (Xi, ˆ
+Xi), Jensen’s inequality gives:
+H(XI| ˆ
+XI) ≥1
+u
+u
+X
+i=1
+H(Xi| ˆ
+Xi).
+Combining the inequalities, we obtain the following upper bound:
+H(Xu| ˆ
+Xu) ≤
+u
+X
+i=1
+H(Xi| ˆ
+Xi) ≤uH(XI| ˆ
+XI).
+Now, we lower bound the entropy of the source H(Xu) = H(S) = log
+ u
+n
+
+.
+By standard
+approximations (see e.g. section 14.2 of (Cover and Thomas, 2001)), we have
+ u
+n
+
+≥
+q
+u
+8n(u−n)2uH(p),
+so
+H(Xu) = log
+u
+n
+
+≥uH(p) + 1
+2 log
+u
+8n(u −n)
+≥uH(p) −1
+2 log(8n).
+26
+
+Combining these results:
+B(M) ≥I(Xu; ˆ
+Xu) = H(Xu) −H(Xu| ˆ
+Xu)
+≥(uH(p) −1
+2 log(8n)) −uH(XI| ˆ
+XI)
+= u(H(p) −H(XI| ˆ
+XI)) −1
+2 log(8n)
+= uI(XI; ˆ
+XI) −1
+2 log(8n).
+Since uI(XI; ˆ
+XI) = n · Fp
+ µK(M), µN(M)
+
+, it follows that:
+B(M)
+n
+≥Fp
+ µK(M), µN(M)
+
+−log(8n)
+2n
+,
+as desired.
+B.2
+Proof of Lemma 3.5
+Lemma B.3 (Same as Lemma 3.5). For p > 0, let Fp(µK, µN) = I(X; ˆ
+X)/p, where X ∼Bern(p),
+ˆ
+X | (X = 1) ∼µK, and ˆ
+X | (X = 0) ∼µN. We also define F0(µK, µN) = KL(µK∥µN). Then, for
+p ∈[0, 1) and (µK, µN) ∈P([0, 1])2:
+1. The function (p, µK, µN) 7→Fp(µK, µN) is jointly lower semi-continuous.
+2. Fp(µK, µN) is continuous in p.
+3. Fp is differentiable in p with
+∂
+∂pFp(µK, µN) = −KL(µN∥pµK+(1−p)µN)
+p2
+whenever p > 0.
+Proof. We prove the three properties using the following identity:
+I(X; ˆ
+X) = KL(PX, ˆ
+X∥PX ⊗P ˆ
+X)
+=
+E
+X∼Bern(p) KL(P ˆ
+X|X∥P ˆ
+X)
+= pKL(µK∥µp) + (1 −p)KL(µN∥µp),
+(2)
+where µp = pµK + (1 −p)µN is the marginal distribution of ˆ
+X. Dividing by p, we obtain the
+expression for Fp:
+Fp(µK, µN) = KL(µK∥µp) + 1 −p
+p
+KL(µN∥µp).
+(3)
+1. Joint Lower Semi-Continuity.
+For any sequence (pn, µK,n, µN,n) →(p, µK, µN), we show
+that lim inf Fpn ≥Fp.
+First, observe that the map (p, µK, µN) 7→µp = pµK + (1 −p)µN is
+continuous from the product topology to the weak-* topology. Since KL divergence is jointly lower
+semi-continuous (LSC) with respect to the weak-* topology, it is immediate that Fp(µK, µN) is LSC
+whenever p > 0.
+Consider the case where p = 0.
+As pn →0, µpn →µN, the first term converges like
+lim inf KL(µK,n∥µpn) ≥KL(µK∥µN). The second term 1−pn
+pn KL(µN,n∥µpn) is always non-negative.
+Therefore,
+lim inf Fpn ≥KL(µK∥µN) + 0 = F0(µK, µN),
+proving its joint LSC everywhere.
+27
+
+2. Continuity in p.
+For fixed µK, µN, and p > 0, Fp is clearly continuous as a composition of
+continuous functions. We only need to verify continuity at p = 0. Standard results in information
+theory have shown that the KL divergence vanishes sublinearly when the two distributions are close,
+see e.g. Proposition 2.20 in (Polyanskiy and Wu, 2025):
+∂
+∂pKL(µN∥µp)
+
+
+
+
+p=0
+= 0 iff µK ≪µN.
+Hence, when KL(µK∥µN) < ∞(and hence µK ≪µN), we have
+lim
+p→0 Fp(µK, µN) = lim
+p→0
+
+KL(µK∥µp) + 1 −p
+p
+KL(µN∥µp)
+
+= KL(µK∥µN) + lim
+p→0
+1 −p
+p
+KL(µN∥µp)
+= KL(µK∥µN),
+where the second equality is because the limit of first term is at least KL(µK∥µN) by LSC, and at
+most limp→0(1 −p)KL(µK∥µN) by convexity. The last equality is because the second term vanishes
+by L’Hopital’s rule.
+When KL(µK∥µN) = ∞, the limit also goes to infinity because KL(µK∥µp) →∞.
+3. Differentiability in p.
+Fix µK, µN. For p ∈(0, 1), let ν := µK + µN and write fK := dµK
+dν ,
+fN := dµN
+dν , so that the mixture µp = pµK + (1 −p)µN has density
+mp := dµp
+dν = pfK + (1 −p)fN.
+Using (2), we can write
+I(p) := I(X; ˆ
+X) = p
+Z
+fK log fK
+mp
+dν + (1 −p)
+Z
+fN log fN
+mp
+dν.
+We first show that I′(p) = KL(µK∥µp) −KL(µN∥µp). For convenience, we assume that the KL
+divergence is base-e in this part and drop the ln 2 factor. All results hold for base-2 as well.
+For p ∈(0, 1) we have
+∂
+∂p log mp = fK −fN
+mp
+,
+and
+
+
+fK −fN
+mp
+
+
+ ≤
+fK + fN
+pfK + (1 −p)fN
+≤1
+p +
+1
+1 −p.
+Therefore the functions fK ·
+
+ ∂
+∂p log mp
+
+ and fN ·
+
+ ∂
+∂p log mp
+
+ are ν-integrable (bounded by constants
+times fK and fN, which integrate to 1), and by dominated convergence we may differentiate I(p) by
+moving
+∂
+∂p inside the integrals.
+Differentiating I(p) yields
+I′(p) =
+Z
+fK log fK
+mp
+dν −
+Z
+fN log fN
+mp
+dν
++ p
+Z
+fK
+
+−∂
+∂p log mp
+
+dν + (1 −p)
+Z
+fN
+
+−∂
+∂p log mp
+
+dν.
+28
+
+The last two terms cancel:
+p
+Z
+fK
+
+−fK −fN
+mp
+
+dν + (1 −p)
+Z
+fN
+
+−fK −fN
+mp
+
+dν = −
+Z
+(pfK + (1 −p)fN)fK −fN
+mp
+dν
+= −
+Z
+(fK −fN) dν = 0,
+since
+R
+fK dν =
+R
+fN dν = 1. Hence,
+I′(p) = KL(µK∥µp) −KL(µN∥µp).
+Finally, Fp = I(p)/p for p > 0, so by the quotient rule
+∂
+∂pFp = pI′(p) −I(p)
+p2
+= p
+ KL(µK∥µp) −KL(µN∥µp)
+
+−
+ pKL(µK∥µp) + (1 −p)KL(µN∥µp)
+
+p2
+= −KL(µN∥µp)
+p2
+.
+B.3
+Proof for achievability of rate-distortion lower bound
+Before proving Lemma 3.7, we need the following reduction, which states that for each p, it suffices
+to consider ˆ
+x as having finite support. The exact support set depends on p and the error constraints,
+yet the size of this set is uniformly upper bounded by 5, by an application of Caratheodory’s theorem.
+Lemma B.4 (Finite Support Reduction). Fix dK, dN, εK, εN > 0 and p ∈(0, 1). Then, there exists
+(µ∗
+K, µ∗
+N) ∈CK(εK) × CN(εN) which attains the minimum in the definition of Rp,
+Rp(εK, εN) = Fp(µ∗
+K, µ∗
+N),
+and that µ∗
+K, µ∗
+N are discrete distributions with |supp(µ∗
+K) ∪supp(µ∗
+N)| ≤5.
+Proof. We will start by assuming a pair (µ∗
+K, µ∗
+N) with errors exactly equal to εK and εN and attains
+the minimum in the definition of Rp. Then, we show that there exists some other (µ′
+K, µ′
+N) which
+takes value on at most 5 points, achieves the same error levels, and attains the same rate:
+Rp(εK, εN) = Fp(µ∗
+K, µ∗
+N) = Fp(µ′
+K, µ′
+N).
+Consider the joint distribution PX, ˆ
+X of (X, ˆ
+X) that (µ∗
+K, µ∗
+N) induces, and let P ˆ
+X = pµ∗
+K + (1 −
+p)µ∗
+N be the marginal distribution of ˆ
+X. Then, for P ˆ
+X-almost every ˆ
+x ∈[0, 1], we have a unique
+posterior distribution for X, denoted PX| ˆ
+X(·|ˆ
+x) = Bern(qˆ
+x). The value qˆ
+x is characterized by the
+Radon-Nikodym derivative
+qˆ
+x = p · dµ∗
+K
+dP ˆ
+X
+(ˆ
+x) ∈[0, 1].
+For each q ∈[0, 1], we use h(q) to denote the binary entropy function h(q) = −q log2 q −(1 −
+q) log2(1 −q), where h(0) = h(1) = 0. We now consider the P ˆ
+X-everywhere defined vector-valued
+function f : E →R4, which maps each ˆ
+x to the tuple
+f(ˆ
+x) =
+ qˆ
+x, qˆ
+x · dK(ˆ
+x), (1 −qˆ
+x) · dN(ˆ
+x), h(qˆ
+x)
+
+.
+29
+
+Let E be defined as the points over which f is finite, and for convenience we will assume (µ∗
+K, µ∗
+N)
+are tight for both error constraints. Although dK, dN can take infinite values, E has full P ˆ
+X-measure,
+as the error constraints imply that the following integrals are finite:
+E
+PX, ˆ
+X
+[dK( ˆ
+X)|X = 1] = 1
+p E
+P ˆ
+X
+[q ˆ
+X·dK( ˆ
+X)] = εK
+and
+E
+PX, ˆ
+X
+[dN( ˆ
+X)|X = 0] =
+1
+1 −p E
+P ˆ
+X
+[(1−q ˆ
+X)·dN( ˆ
+X)] = εN.
+Moreover, we also note that by construction,
+E
+ˆ
+X∼P ˆ
+X
+[q ˆ
+X] = p
+and
+E
+ˆ
+X∼P ˆ
+X
+[h(q ˆ
+X)] = H(X| ˆ
+X) = h(p) −p · Fp(µ∗
+K, µ∗
+N).
+Note that E ˆ
+X∼P ˆ
+X[f( ˆ
+X)] =
+ p, pεK, (1 −p)εN, h(p) −p · Fp(µ∗
+K, µ∗
+N)
+
+is in the convex hull of the
+vectors
+
+(qˆ
+x, qˆ
+x · dK(ˆ
+x), (1 −qˆ
+x) · dN(ˆ
+x), h(qˆ
+x)) : ˆ
+x ∈E
+
+.
+By Carathéodory’s Theorem, there exist α1, . . . , α5 ≥0 and ˆ
+x1, . . . , ˆ
+x5 ∈[0, 1] such that P5
+i=1 αi = 1
+and
+E
+ˆ
+X∼P ˆ
+X
+[f( ˆ
+X)] =
+5
+X
+i=1
+αif(ˆ
+xi).
+Now, consider the random variable X′ ∼P5
+i=1 αiδˆ
+xi, where δˆ
+xi is the Dirac delta distribution at
+ˆ
+xi. Let PX|X′ be defined as PX|X′(x|x′) = Bern(qx′). We can check that P[X = 1] = p under this
+PX|X′ since P5
+i=1 αiqˆ
+xi = p. We can now construct µ′
+K and µ′
+N as
+µ′
+K = 1
+p
+5
+X
+i=1
+αiqˆ
+xiδˆ
+xi and µ′
+N =
+1
+1 −p
+5
+X
+i=1
+αi(1 −qˆ
+xi)δˆ
+xi.
+We have µ′
+K ∈CK(εK) and µ′
+N ∈CN(εN) since
+E
+X′∼µ′
+K
+[dK(X′)] = 1
+p
+5
+X
+i=1
+αiqˆ
+xi · dK(ˆ
+xi) = εK
+and
+E
+X′∼µ′
+N
+[dN(X′)] =
+1
+1 −p
+5
+X
+i=1
+αi(1 −qˆ
+xi) · dN(ˆ
+xi) = εN.
+Finally, (µ′
+K, µ′
+N) also achieve the same rate as (µ∗
+K, µ∗
+N) since
+p · Fp(µ′
+K, µ′
+N) = h(p) −
+E
+X′∼PX′[h(qX′)] = h(p) −
+E
+ˆ
+X∼P ˆ
+X
+[h(q ˆ
+X)] = p · Fp(µ∗
+K, µ∗
+N).
+It follows that (µ′
+K, µ′
+N) attains the minimum in the definition of Rp and has support on at most
+5 points.
+Now that we reduced the reconstructed ˆ
+X to a random variable with finite support, we can
+proceed with the proof of achievability.
+Lemma B.5 (same as Lemma 3.7). Fix any p = n
+u ∈(0, 1) and εK, εN > 0. Then, for all δ > 0,
+there is a sufficiently large n and u such that there exists a membership tester M for universe [u]
+and key sizes n which achieves error rates (εK + δ, εN + δ), and:
+B(M)
+n
+≤Rp(εK, εN) + δ.
+30
+
+Proof. Step 1: Finite Support and Continuity. Let (µ∗
+K, µ∗
+N) be the pair of distributions
+attaining the minimum in the definition of Rp(εK, εN). By the finite support reduction (proven in
+the previous lemma), we assume without loss of generality that these distributions are supported on
+a finite set Y∗⊂[0, 1] with |Y∗| ≤5. In the rest of the proof, we will rename the recovered ˆ
+X as Y
+for notational convenience.
+Let P ∗
+X,Y be the joint distribution of X and Y under the optimal (µ∗
+K, µ∗
+N), where P ∗
+X = Bern(p)
+is the source distribution, and P ∗
+Y |X is the transition kernel defined by P ∗
+Y |X(y|1) = µ∗
+K(y) and
+P ∗
+Y |X(y|0) = µ∗
+N(y).
+We will use D to denote the set of joint distributions PX,Y with Bern(p) marginal on X and
+which places zero mass on points with infinite errors: for all y ∈Y∗, PX,Y (1, y) = 0 whenever
+dK(y) = ∞and PX,Y (0, y) = 0 whenever dN(y) = ∞. Since both X and Y have finite support, D is
+compact. Consequently, the following functionals are uniformly continuous over D:
+1. DK(PX,Y ) = Ey∼PY |X(·|1)[dK(y)];
+2. DN(PX,Y ) = Ey∼PY |X(·|0)[dN(y)].
+Therefore, there exists a γ > 0 such that for any P ′
+X,Y ∈D with ∥P ′
+X,Y −P ∗
+X,Y ∥1 < γ, we have:
+|DK(P ′
+X,Y ) −DK(P ∗
+X,Y )| < δ,
+(4)
+|DN(P ′
+X,Y ) −DN(P ∗
+X,Y )| < δ,
+(5)
+Step 2: Typical Sequences. For each PX,Y ∈D, and for each source sequence xu ∈{0, 1}u,
+let T u
+[PY |X]γ(xu) be the set of PY |X-typical sequences under condition xu with constant γ as defined
+in Definition 2.9 of Csiszár and Körner (2011). These sequences are yu ∈Y∗u such that:
+1. Let ˆ
+PX,Y (x′, y′|xu, yu) be the joint empirical distribution of xi and yi for i = 1, . . . , u in the
+sequences xu and yu. Then,
+
+
+ ˆ
+PX,Y (x′, y′|xu, yu) −PX(x′)PY |X(y′|x′)
+
+
+ ≤γ.
+2. Whenever PY |X(y′|x′) = 0, ˆ
+PX,Y (x′, y′|xu, yu) = 0.
+It follows from uniform continuity that, for sufficiently small γ, all P ∗
+Y |X-typical sequences yu under
+condition xu will have the empirical distribution of (xi, yi) close to P ∗
+X,Y , and thus satisfy (4) and
+(5) for the desired choice of δ.
+By Lemma 2.13 in Csiszár and Körner (2011), there exist sequences δu →0 and γu →0 such
+that for all xu ∈{0, 1}u with n = pu entries of 1,
+
+
+
+
+1
+u log |T u
+[PY |X]γu(xu)| −H(Y |X)
+
+
+
+ ≤δu,
+where H(Y |X) is based on the selected PX,Y .
+Similarly, we can define PY -typical sequences with constant γ as the sequences yu ∈Yu such that
+
+
+ ˆ
+PY (y′|yu) −PY (y′)
+
+
+ ≤γ,
+where ˆ
+PY (y′|yu) is the empirical distribution of y′ in yu. There exist sequences δu →0 and γu →0
+such that
+
+
+
+
+1
+u log |T u
+[PY ]γu| −H(Y )
+
+
+
+ ≤δu,
+31
+
+where H(Y ) is based on the selected PY .
+Step 3: Type Covering. By the previous steps, for sufficiently large u, there is some γ such
+that for each source sequence xu with n entries of 1, each y ∈T u
+[PY |X]γ(xu) satisfies (4) and (5) for
+the desired choice of δ. Now, we apply the same proof as the type covering lemma (Lemma 9.1 in
+Csiszár and Körner (2011)) to show that all valid source xu can be “covered” by some yu in a fixed
+codebook M. We will demonstrate the existence of such a codebook and bound its size.
+Let P ∗
+Y be the marginal distribution of Y under P ∗
+X,Y . Consider a codebook M of m sequences
+sampled uniformly from T u
+[P ∗
+Y ]γ, and let Y u be such a random sequence. For any source sequence xu
+with n entries of 1, the probability that Y u is P ∗
+X|Y -typical under condition xu with constant γ is
+given by
+P[Y u ∈T u
+[P ∗
+Y |X]γ(xu)] =
+|T u
+[P ∗
+Y |X]γ(xu)|
+|T u
+[P ∗
+Y ]γ|
+≥2−u(H(Y |X)+pδ/4)
+2u(H(Y )+pδ/4)
+= 2−u(I(X;Y )+pδ/2),
+where X, Y are distributed according to P ∗
+X,Y . The inequality in the middle is due to the fact that
+δu is eventually smaller than pδ/4, for our choice of δ.
+With m uniformly selected Y u, the expected number of xu that are not covered by any Y u in
+the codebook is at most:
+E[number of xu not covered by M] =
+X
+xu
+P[Y u /
+∈T u
+[P ∗
+Y |X]γ(xu)]
+≤
+X
+xu
+
+1 −2−u(I(X;Y )+pδ/2))
+m
+≤exp(−m2−u(I(X;Y )+pδ/2)) ·
+u
+n
+
+.
+For sufficiently large u, this value is strictly less than 1 if we choose m = 2u(I(X;Y )+pδ). As the
+expectation is smaller than 1, this means that there exists a choice of codebook that simultaneously
+covers all source sequences.
+We can now define a membership tester, which initializes by encoding the nearest codeword in M
+to the xu corresponding to key set K, and on query i, outputs the ith entry of that codeword. And the
+proof is finished since the memory cost is at most log |M| ≤u(I(X; Y )+pδ) = n·
+ Rp(εK, εN)+δ
+
+.
+B.4
+Proof of Theorem 3.2
+Theorem B.6 (same as Theorem 3.2). Suppose (µ∗
+K, µ∗
+N) ∈CK(εK)×CN(εN) is the unique minimizer
+of KL(µK∥µN). In the setting of Theorem 3.1, if {Mj} is asymptotically optimal, in the sense that
+lim sup
+j→∞
+B(Mj)
+nj
+= KL(µ∗
+K∥µ∗
+N),
+then we must have µK(Mj) →µ∗
+K and µN(Mj) →µ∗
+N in Wasserstein-1 distance.
+Proof of Theorem 3.2. Consider the output distributions (µK(Mj), µN(Mj)) for j = 1, 2, . . .. By
+compactness of P([0, 1])2, there exists a subsequence of (µK(Mj), µN(Mj)) converging to some
+(µ′∗
+K, µ′∗
+N) ∈P([0, 1])2.
+As shown in the proof of Theorem 3.1, the limit point (µ′∗
+K, µ′∗
+N) must satisfy the error constraints,
+i.e., (µ′∗
+K, µ′∗
+N) ∈CK(εK) × CN(εN). By the memory-optimality of {Mj}, if (µ∗
+K, µ∗
+N) are the unique
+32
+
+minimizers of KL divergence, then we have:
+KL(µ∗
+K∥µ∗
+N) = lim sup
+j→∞
+B(Mj)
+nj
+≥lim sup
+j→∞
+
+Fpj(µK(Mj), µN(Mj)) + O
+log nj
+nj
+
+≥KL(µ′∗
+K∥µ′∗
+N).
+Hence (µ∗
+K, µ∗
+N) = (µ′∗
+K, µ′∗
+N).
+Because any convergent subsequence of (µK(Mj), µN(Mj))
+converges to (µ∗
+K, µ∗
+N), and the space P([0, 1])2 is compact, it follows that the whole sequence
+(µK(Mj), µN(Mj)) converges to (µ∗
+K, µ∗
+N).
+The desired claim then follows from the fact that
+convergence in Wasserstein-1 implies weak-* convergence (and on [0, 1], the bounded-first-moment
+condition required for this implication is automatic).
+B.5
+Proof of Theorem 3.3
+Theorem B.7 (same as Theorem 3.3). Let χ2 be the chi-squared divergence. In the setting of
+Theorem 3.2, suppose µ∗
+N is supported on a finite set X and χ2(µ∗
+K∥µ∗
+N) < ∞. For any membership
+tester M for key size n and universe [u] with query outputs restricted to X, if we fix p = n
+u and let
+n, u →∞, then
+B(M)
+n
+≥KL(µ∗
+K∥µ∗
+N) −χ2(µ∗
+K∥µ∗
+N)
+2 ln 2
+· p + o(p),
+and this bound is achievable.
+Proof. Let δ := minx∈X µ∗
+N(x) > 0. For p ∈(0, 1), recall
+Rp(εK, εN) =
+min
+(µK,µN)∈C Fp(µK, µN),
+F0(µK, µN) = KL(µK∥µN),
+where C = CK(εK) × CN(εN) ∩P(X) and P(X) ⊆RX is the set of all probability distributions on X.
+Step 1: a fixed compact choice set for small p.
+Let (µK(p), µN(p)) ∈C be any mapping from
+p to minimizers of Fp. As shown in the proof of Theorem 3.2, µN(p) ⇒µ∗
+N as p →0, hence for all
+sufficiently small p we have µN(p)(x) ≥δ/2 for every x ∈X. Therefore, for some p0 > 0 we may
+restrict attention to the compact set
+C′ := C ∩
+n
+(µK, µN) : µN(x) ≥δ/2 ∀x ∈X
+o
+,
+and for all p ∈(0, p0],
+Rp(εK, εN) =
+min
+(µK,µN)∈C′ Fp(µK, µN),
+since there is a minimizer (µK(p), µN(p)) that lies in C′ for p sufficiently small.
+Step 2: verify assumptions for envelope theorem.
+Define a maximization problem with value
+function
+V (p) :=
+max
+(µK,µN)∈C′ f((µK, µN), p),
+f((µK, µN), p) := −Fp(µK, µN),
+so that V (p) = −Rp(εK, εN) for all p ∈[0, p0]. Now, we verify the assumptions of Corollary 4 of
+Milgrom and Segal (Milgrom and Segal, 2002). We will use fp to denote ∂f
+∂p in the rest of the proof.
+33
+
+• Compactness. C′ ⊂R2|X| is closed and contained in a product of simplices, hence compact.
+• Continuity of f. Since µN(x) ≥δ/2 on C′ and µp := pµK + (1 −p)µN satisfies µp(x) ≥
+(1 −p0)δ/2 > 0 for p ∈[0, p0], all KL terms appearing in the expression of Fp are finite and
+continuous; thus (µK, µN, p) 7→f((µK, µN), p) is continuous on C′ × [0, p0].
+• Continuity of fp. For p > 0, Lemma 3.5 gives
+∂
+∂pFp(µK, µN) = −KL(µN∥pµK + (1 −p)µN)
+p2
+,
+(p > 0),
+hence
+fp((µK, µN), p) = KL(µN∥µp)
+p2
+,
+(p > 0).
+Fix (µK, µN) ∈C′ and write h(x) := µK(x)
+µN(x) −1. Then h(x) ≥−1 and, since µN(x) ≥δ/2 on
+C′, we have a uniform bound
+M :=
+sup
+(µK,µN)∈C′ ∥h∥∞< ∞.
+Pick any constant c ∈(0, 1) and let p1 := min{p0, c/M}.
+Then for all p ∈[0, p1], all
+(µK, µN) ∈C′, and all x ∈X, we have |ph(x)| ≤c. By Taylor’s theorem for log(1 + u) around
+u = 0 with a uniform remainder bound on the compact interval u ∈[−c, c], we obtain
+−log(1 + u) = −u + u2
+2 + O(u3)
+uniformly for |u| ≤c.
+Therefore,
+KLe(µN∥µp) =
+X
+x∈X
+µN(x)
+h
+−log(1 + ph(x))
+i
+= p2
+2
+X
+x∈X
+µN(x)h(x)2 + O(p3),
+where the O(p3) term is uniform over (µK, µN) ∈C′. Consequently,
+KL(µN∥µp) =
+1
+ln 2KLe(µN∥µp) =
+p2
+2 ln 2χ2(µK∥µN) + O(p3),
+uniformly over (µK, µN) ∈C′. Hence fp extends continuously to p = 0 by
+fp((µK, µN), 0) :=
+1
+2 ln 2χ2(µK∥µN),
+and fp is continuous on C′ × [0, p0].
+Step 3: apply envelope theorem and conclude the first-order expansion.
+By Milgrom and
+Segal’s Corollary 4(ii) (Milgrom and Segal, 2002), V is absolutely continuous and its right derivative
+satisfies
+V ′
++(p) =
+max
+(µK,µN)∈arg maxC′ f(·,p) fp((µK, µN), p)
+for p ∈[0, p0).
+Since the optimizer at p = 0 is unique, arg maxC′ f(·, 0) = {(µ∗
+K, µ∗
+N)} and thus
+V ′
++(0) = fp((µ∗
+K, µ∗
+N), 0) =
+1
+2 ln 2χ2(µ∗
+K∥µ∗
+N).
+Since Rp = −V (p), it follows that as p →0,
+Rp(εK, εN) = KL(µ∗
+K∥µ∗
+N) −χ2(µ∗
+K∥µ∗
+N)
+2 ln 2
+p + o(p).
+34
+
+C
+Proofs for Section 4.1
+Our proof is an application of Theorem 3.1. We solve the following convex optimization problem
+and show that µ∗
+K and µ∗
+N are the unique optimal solutions. We note that, since the base-e KL
+divergence is a constant multiple of the base-2 KL divergence, we assume KL divergence is base-e
+for convenience of analysis. The shape of optimal solutions is unaffected by this choice of base. In
+this appendix, we use X to denote the score random variable (i.e., ˆ
+X in the main text).
+min
+µK,µN∈P([0,1]) KL(µK∥µN),
+subject to
+(
+EX∼µK[−ln X] ≤εK,
+EX∼µN [−ln(1 −X)] ≤εN.
+(6)
+The Lagrangian is:
+L(µK, µN, λK, λN) = KL(µK∥µN) + λK
+ E
+µK[−ln X] −εK
+
++ λN
+ E
+µN[−ln(1 −X)] −εN
+
+.
+Before we proceed, we introduce the following technical lemmas for optimization over measure
+spaces.
+C.1
+Technical preliminaries
+To analyze the optimality condition for convex functionals over the space of measures, we use
+Gâteaux derivatives.
+Definition C.1 (Gâteaux Derivative). Let J : P([0, 1]) →R be a linear functional. The Gâteaux
+derivative of J at Q ∈P([0, 1]) in the direction R −Q, where R ∈P([0, 1]), is defined as:
+δJ(Q; R −Q) = lim
+η→0+
+J((1 −η)Q + ηR) −J(Q)
+η
+,
+provided the limit exists.
+If J is a convex functional, the Gâteaux derivative allows us to state the necessary and sufficient
+conditions for global optimality.
+Theorem C.2 (First-Order Optimality Condition; see e.g. (Luenberger, 1997)). If J : P([0, 1]) →R
+is convex and Gâteaux differentiable, then Q∗∈P([0, 1]) minimizes J if and only if δJ(Q∗; R−Q∗) ≥0
+for all R ∈P([0, 1]).
+When the Gâteaux derivative can be represented in an integral form (and in particular linear in
+R −Q), this optimality condition translates into a structural property regarding the support of the
+optimal measure.
+Lemma C.3 (KKT Support Condition). Suppose the Gâteaux derivative of a convex functional J
+at Q can be represented as
+δJ(Q; R −Q) =
+Z 1
+0
+gQ(x)dR(x) −
+Z 1
+0
+gQ(x)dQ(x) = E
+R[gQ(X)] −E
+Q[gQ(X)],
+for some measurable function gQ(x) (which may depend on Q). Then Q∗minimizes J if and only if
+Q∗is supported on the set of global minima of the function gQ∗(x).
+That is, x ∈supp(Q∗) =
+⇒gQ∗(x) = infy∈[0,1] gQ∗(y).
+35
+
+Proof. By Theorem C.2, Q∗is optimal iff ER[gQ∗(X)] ≥EQ∗[gQ∗(X)] for all R.
+Let K∗=
+EQ∗[gQ∗(X)]. If we take R = δy for any y ∈[0, 1], we get gQ∗(y) ≥K∗. Thus K∗is the global
+minimum value of gQ∗(x). Since Q∗is a probability measure, the equality EQ∗[gQ∗(X)] = K∗can
+only hold if Q∗is supported entirely on the set where gQ∗(x) = K∗.
+We also recall the following standard result regarding the minimization of KL divergence subject
+to linear constraints.
+Lemma C.4 (Donsker–Varadhan variational formula). Suppose Q ∈P([0, 1]), and let h be a
+Q-measurable real function such that EQ[e−h(X)] < ∞. Then,
+−ln E
+X∼Q[e−h(X)] =
+inf
+P∈P([0,1])
+n
+KL(P∥Q) + E
+P[h(X)]
+o
+.
+The infimum is attained when P has the Radon-Nikodym derivative dP
+dQ(x) ∝e−h(x).
+C.2
+Solving the optimization problem
+Step 1: stationary condition for µK.
+Applying the variational formula Theorem C.4 with
+h(x) = −λK ln x, the first two terms are minimized when the following inf is attained:
+inf
+µK
+n
+KL(µK∥µN) + E
+µK[λK(−ln X)]
+o
+.
+By Theorem C.4, this is when
+dµK
+dµN
+(x) ∝e−h(x) = xλK.
+(7)
+Let C(µN) = EµN [XλK] be the normalization constant. The value of the infimum is −ln C(µN).
+Step 2: stationary condition for µN.
+Plugging the optimized µK back into the Lagrangian, we
+obtain the dual function which we seek to minimize over µN:
+J(µN) = −ln E
+µN[XλK] + λN E
+µN[−ln(1 −X)] −λKεK −λNεN.
+J(µN) is a convex functional of µN. We use Gâteaux derivatives δJ(µ∗
+N; R −µ∗
+N) to find the
+optimality condition.
+The derivative of the first term J1(µN) = −ln EµN [XλK] is:
+δJ1(µN; R −µN) = −ER[XλK] −EµN [XλK]
+EµN [XλK]
+= −ER[XλK] −EµN [XλK]
+C(µN)
+.
+The derivative of the second (linear) term J2(µN) is:
+δJ2(µN; R −µN) = λN
+ E
+R[−ln(1 −X)] −E
+µN[−ln(1 −X)]
+
+.
+Combining the terms, δJ = δJ1 + δJ2 can be represented in the integral form, as in Theorem C.3,
+by the following function gµN (x):
+gµN (x) = −xλK
+C(µN) −λN ln(1 −x).
+(8)
+By the KKT Support Condition (Theorem C.3), the optimal distribution µ∗
+N must be supported
+on the set of global minima of gµ∗
+N (x).
+36
+
+Step 3: solving for support and probability mass.
+Let g := gµ∗
+N and C∗:= C(µ∗
+N). To
+analyze the minima of g, we now establish a crucial property of λK.
+Lemma C.5. In the non-trivial regime (e−εK + e−εN > 1), the optimal Lagrange multiplier satisfies
+λK > 1.
+Proof. Consider the derivatives of g(x):
+g′(x) = −λKxλK−1
+C∗
++
+λN
+1 −x,
+g′′(x) = −λK(λK −1)xλK−2
+C∗
++
+λN
+(1 −x)2 .
+Note that C∗> 0, otherwise we must have µ∗
+N = δ0. But if µ∗
+N collapses to a point mass, then
+we either have µ∗
+K = µ∗
+N (infeasible solution) or KL(µ∗
+K∥µ∗
+N) = ∞. We will try to avoid this and
+solve for a µ∗
+N with non-singleton support.
+Suppose λK ≤1. If λK = 1, g′′(x) > 0. If 0 < λK < 1, then λK −1 < 0, so the first term is
+positive, and g′′(x) > 0. In both cases, g(x) is strictly convex and has a unique global minimum
+x∗. Thus, µ∗
+N = δx∗, and hence µ∗
+K = δx∗by the previous result on dµ∗
+K
+dµ∗
+N (x). This implies the KL
+divergence objective is zero, contradicting the assumption of the non-trivial regime.
+Knowing λK > 1, we analyze the shape of g(x). Since λK −1 > 0, xλK−1 →0 as x →0, so
+g′(0) = λN > 0. It follows that g is increasing both as x →0 and x →1. We will show that there
+is at most one local minimum at some x∗∈(0, 1), so 0 and x∗must both be global minima, with
+g(x∗) = g(0) = 0.
+Consider stationary condition g′(x) = −λKxλK −1
+C∗
++
+λN
+1−x = 0.
+Note that the first term is
+negative, the second term is positive, and g′(x) > 0 iff
+λN
+1−x > λKxλK −1
+C∗
+, which is true iff C∗λN
+λK >
+xλK−1(1 −x) =: h(x). Clearly h(0) = h(1) = 0, corresponding to g′(0) being positive at these
+endpoints. Differentiating h, we have:
+h′(x) = xλK−2(λK −1 −λKx).
+Since xλK−2 is always positive on (0, 1), this derivative only changes sign once from positive to
+negative, and therefore the equation C∗λN
+λK = h(x) has at most two solutions in (0, 1), in which case
+h(x) will start from zero, increase to a local maximum, and then drop back to 0 at x = 1. Hence,
+there are at most two points where g′(x) = 0, the first one being a local maximum and the second a
+local minimum, which we call x∗.
+In fact, if the optimal KL divergence were to be finite, the global minimum of g = 0 must be
+attained at both x = 0 and x∗:
+1. If the minimum is uniquely at x = 0. Then µ∗
+N = δ0. This implies C∗= 0λK = 0 (since
+λK > 1). This leads to J(µ∗
+N) = ∞, which is not optimal.
+2. If the minimum is uniquely at x∗. Then µ∗
+N = δx∗. This implies µ∗
+K = µ∗
+N and KL = 0, a
+contradiction.
+We conclude that µ∗
+N is a two-point distribution:
+µ∗
+N = (1 −q∗)δ0 + q∗δx∗.
+We can now determine µ∗
+K using the relative density in (7): because dµ∗
+K
+dµ∗
+N (0) = 0λK = 0, it follows
+that it is a point mass µ∗
+K = δx∗.
+Now we use the tight constraints to determine x∗and q∗for µ∗
+N.
+37
+
+1. Constraint on µ∗
+K: Eµ∗
+K[−ln X] = εK =
+⇒−ln(x∗) = εK =
+⇒x∗= e−εK.
+2. Constraint on µ∗
+N: Eµ∗
+N [−ln(1 −X)] = εN.
+(1 −q∗)(−ln 1) + q∗(−ln(1 −x∗)) = εN =
+⇒q∗=
+εN
+−ln(1 −x∗).
+The condition e−εK + e−εN > 1 ensures that εN < −ln(1 −e−εK), so 0 < q∗< 1.
+Step 4: verifying KKT conditions.
+Note that we calculate C∗= Eµ∗
+N [XλK] = q∗(x∗)λK (since
+λK > 1).
+Condition 1: g(x∗) = 0.
+g(x∗) = −(x∗)λK
+C∗
+−λN ln(1 −x∗) = −1
+q∗−λN ln(1 −x∗) = 0.
+This yields λN =
+−1
+q∗ln(1−x∗). Since q∗> 0 and ln(1 −x∗) < 0, we have λN > 0.
+Condition 2: g′(x∗) = 0.
+g′(x∗) = −λK(x∗)λK−1
+C∗
++
+λN
+1 −x∗= 0.
+Rearranging and substituting C∗:
+λK =
+λNC∗
+(1 −x∗)(x∗)λK−1 =
+λNq∗(x∗)λK
+(1 −x∗)(x∗)λK−1 = λNq∗x∗
+1 −x∗.
+Substituting the expression for λN:
+λK =
+
+−1
+q∗ln(1 −x∗)
+ q∗x∗
+1 −x∗=
+−x∗
+(1 −x∗) ln(1 −x∗).
+We verify that λK > 1. Let y = 1 −x∗∈(0, 1). We need to show −(1−y)
+y ln y
+> 1. Since y ln y < 0,
+this is equivalent to −(1−y) < y ln y, or 1−1/y < ln y. Consider the function h(y) = ln y −(1−1/y).
+Its derivative is h′(y) = 1/y −1/y2 = (y −1)/y2. On (0, 1), h′(y) < 0. Since limy→1−h(y) = 0, we
+have h(y) > 0 for y ∈(0, 1). Thus, λK > 1.
+Since λK > 1, the shape analysis in Step 3 holds: g has exactly one local maximum and one
+local minimum in (0, 1), confirming that {0, x∗} are indeed the global minima of g(x). The KKT
+conditions are fully satisfied, and therefore µ∗
+K and µ∗
+N are the global optimum.
+D
+Proofs for Section 4.2
+D.1
+Binary-output reduction via data processing
+We now show that, under the linear error metrics dK(ˆ
+x) = 1 −ˆ
+x and dN(ˆ
+x) = ˆ
+x, we can restrict to
+binary outputs without loss of optimality.
+Lemma D.1 (Binary-output reduction via data processing). Let (µK, µN) be any feasible pair of
+output distributions supported on [0, 1]. Define the Markov kernel T from [0, 1] to {0, 1} by
+T(1 | t) = t,
+T(0 | t) = 1 −t.
+Let ¯
+µK := µKT and ¯
+µN := µNT be the induced distributions on {0, 1}. Then:
+38
+
+1. (Constraints preserved) E¯
+µK[1 −ˆ
+X] = EµK[1 −ˆ
+X] and E¯
+µN [ ˆ
+X] = EµN [ ˆ
+X].
+2. (Objective non-increasing) For every p ∈(0, 1),
+Fp(¯
+µK, ¯
+µN) ≤Fp(µK, µN).
+Consequently, in the definition of Rp(εK, εN) we may restrict to ˆ
+x ∈{0, 1}, and the optimal output
+distributions are Bernoulli.
+Proof sketch. The first part follows from linearity: under T, the binary output Y ∈{0, 1} satisfies
+E[Y | ˆ
+X = t] = t, hence E[Y ] = E[ ˆ
+X] and E[1 −Y ] = E[1 −ˆ
+X]. For the second part, note that the
+kernel commutes with mixtures: ¯
+µp = (pµK +(1−p)µN)T = p¯
+µK +(1−p)¯
+µN. By the data-processing
+(contraction) inequality for KL under a Markov kernel,
+KL(µKT∥µpT) ≤KL(µK∥µp),
+KL(µNT∥µpT) ≤KL(µN∥µp),
+and plugging into the definition of Fp gives the claim.
+D.2
+Solving the convex optimization
+By Theorem D.1, it suffices to consider binary outputs ˆ
+X ∈{0, 1}. Again, we assume the KL
+divergence is base-e for convenience of analysis; the shape of optimal solutions is unaffected by this
+choice of base. Hence µK and µN are Bernoulli distributions, which we parameterize by
+µK = Bern(a),
+µN = Bern(b),
+where a = Pr( ˆ
+X = 1 | X ∈K) and b = Pr( ˆ
+X = 1 | X /
+∈K). This reduction also allows us to apply
+Theorem 3.3, which provides the desired first-order expansion of the memory lower bound w.r.t. p,
+around p = 0. It now suffices to show that the optimal distribution is given by a = 1 −εK and
+b = εN.
+The KL divergence minimization problem for Bernoulli distributions reduces to the two-variable
+convex program
+min
+a,b∈[0,1] KL
+ Bern(a) ∥Bern(b)
+
+s.t.
+a ≥1 −εK,
+b ≤εN.
+(9)
+We now show that the KL divergence objective is strictly increasing in a and strictly decreasing
+in b over the feasible region. Recall the closed form
+KL
+ Bern(a) ∥Bern(b)
+
+= a ln a
+b + (1 −a) ln 1 −a
+1 −b .
+For fixed b ∈(0, 1), differentiating w.r.t. a gives
+∂
+∂aKL(Bern(a)∥Bern(b)) = ln a(1 −b)
+(1 −a)b.
+In the non-trivial regime 1 −εK > εN, the feasible set satisfies a ≥1 −εK > εN ≥b, hence a > b
+throughout the feasible region. Therefore
+ln a(1 −b)
+(1 −a)b > 0,
+39
+
+so the objective is strictly increasing in a over the feasible region. Thus the minimum is attained at
+a∗= 1 −εK.
+Similarly, for fixed a ∈(0, 1), differentiating w.r.t. b gives
+∂
+∂bKL(Bern(a)∥Bern(b)) =
+b −a
+b(1 −b).
+Since a > b on the feasible region, we have ∂/∂b < 0, so the objective is strictly decreasing in b over
+the feasible region. Hence the minimum is attained at the largest feasible b, namely
+b∗= εN.
+Combining the two monotonicity statements yields the unique optimizer of (9):
+µ∗
+K = Bern(1 −εK),
+µ∗
+N = Bern(εN).
+D.3
+A hash-based memory-optimal two-sided filter
+We now show that the filter lower bound can be achieved by a hash-based construction, which, like
+Bloom filters and others, is universe-agnostic, in the sense that the memory usage does not depend
+on the universe size u. Our construction is inspired by the optimal one-sided filters introduced in
+Porat (2009) and Dietzfelbinger and Pagh (2008), based on solving random linear equations over a
+finite field. We also note that this construction is not efficient in practice.
+Theorem D.2. Assume εN = 1/q for some prime power q, and fix any εK ∈[0, 1). There exists a
+hash-based two-sided filter scheme (in the random-oracle model) such that as n →∞, when initialized
+on any key set K ⊆U with |K| = n, it uses
+KL
+
+Bern(1 −εK)
+
+ Bern(εN)
+
++ o(1)
+bits of space per key
+and, with probability 1 −o(1), the resulting filter satisfies FNR ≤εK on keys and FPR = εN on
+every non-key. In particular, the guarantee is uniform over all universe sizes u ≥n.
+Proof. Let Fq be the finite field of size q = 1/εN. WLOG, let U = [u]. We assume access to a
+vector-valued random-oracle hash function
+h : U →Fm
+q ,
+h(i) = (h(i)1, . . . , h(i)m),
+where m is a parameter to be determined at the end, and the coordinates h(i)j are i.i.d. uniform
+over Fq and independent across distinct i’s.
+For y ∈Fm
+q , consider the linear functions defined by h(i)’s:
+⟨h(i), y⟩:=
+m
+X
+j=1
+h(i)j yj ∈Fq.
+Consider the system of equations in the unknown y ∈Fm
+q :
+⟨h(i), y⟩= 0,
+i ∈K,
+(10)
+and restrict to nonzero solutions y ̸= 0.
+40
+
+Initialization.
+Given (εK, εN) and K, the filter calculates the corresponding m, sends each i ∈K
+through the random oracle to obtain h(i)’s, and searches for a nonzero vector y ∈Fm
+q that satisfies
+at least (1 −εK)n equations in (10). If such a y exists, the filter stores a binary encoding of y. The
+construction succeeds if a vector y meeting this requirement exists.
+The memory usage is m log q + O(1) bits, where log is base 2.
+Query.
+On input i′ ∈U, the filter gets h(i′) ∈Fm
+q from the oracle and outputs 1 iff ⟨h(i′), y⟩= 0
+(and outputs 0 otherwise).
+Error guarantees.
+If initialization succeeds, then at least (1 −εK)n keys satisfy ⟨h(i), y⟩= 0.
+Thus for a uniform random key i′ ∼Unif(K) we have
+P[Query(i′) = 0] ≤εK.
+which satisfies the FNR constraint if we convert it into a permutation-invariant membership tester
+via Remark 2.2.
+For false positives, fix any non-key i′ ∈U \ K. Since y is a function of {h(i)}i∈K only, and h(i′)
+is independent of {h(i)}i∈K, we may condition on y and treat it as fixed. The next lemma implies
+P[Query(i′) = 1 | y] = 1
+q = εN,
+hence FPR = εN.
+Lemma D.3. For any fixed y ∈Fm
+q with y ̸= 0, if H1, . . . , Hm are drawn i.i.d. from Unif(Fq), then
+P
+
+
+m
+X
+j=1
+yjHj = 0
+
+= 1
+q .
+Proof. WLOG, suppose y1 ̸= 0. For any c ∈Fq,
+P
+
+
+m
+X
+j=1
+yjHj = c
+
+= P
+
+H1 = y−1
+1
+
+c −
+m
+X
+j=2
+yjHj
+
+
+
+= 1
+q ,
+since H1 is uniform and independent of (H2, . . . , Hm).
+Choice of m and space bound.
+Let
+D := KL
+
+Bern(1 −εK)
+
+ Bern(εN)
+
+.
+Choose any sequence tn →∞with tn = o(n) (e.g. tn = n2/3), and set
+m :=
+nD + tn
+log q
+
+.
+(11)
+Then the memory is
+m log q = nD + tn + O(1),
+i.e. D + o(1) bits per key.
+It remains to show that initialization succeeds with probability 1 −o(1) (hence at least 0.9 for
+all large n).
+41
+
+Second moment method for success probability.
+Let Y := Fm
+q \ {0}, so |Y | = qm −1. For
+each y ∈Y , define
+Ny := 1 {#{i ∈K : ⟨h(i), y⟩= 0} ≥(1 −εK)n} ,
+Z :=
+X
+y∈Y
+Ny.
+Thus Z ≥1 iff there exists a nonzero y satisfying at least (1 −εK)n equations, i.e. initialization
+succeeds. Let pn = P[Ny = 1], then E[Z] = (qm −1)pn.
+Fix any y ̸= 0. For each key i ∈K, by Lemma D.3 and independence across i, the indicators
+1 {⟨h(i), y⟩= 0} are i.i.d. Bern(εN). Therefore, by standard large-deviation bounds, for each y,
+pn = 2−nD+o(n).
+(12)
+Now we bound the second moment E[Z2]:
+E[Z2] =
+X
+y∈Y
+E[Ny] +
+X
+y,y′∈Y
+y̸=y′
+E[NyNy′].
+Consider the second term for fixed y, y′ ∈Y, y ̸= y′. If y′ is a nonzero scalar multiple of y, then for
+each i ∈K, ⟨h(i), y′⟩= 0 iff ⟨h(i), y⟩= 0, so Ny′ = Ny and E[NyNy′] = E[Ny] = pn. Otherwise y, y′
+are linearly independent, and the mapping
+h(i) 7→
+ ⟨h(i), y⟩, ⟨h(i), y′⟩
+
+∈F2
+q
+is a linear surjection. Since h(i) is uniform, the events Ai := {⟨h(i), y⟩= 0} and Bi := {⟨h(i), y′⟩= 0}
+are independent with Pr[Ai] = Pr[Bi] = 1/q and Pr[Ai ∩Bi] = 1/q2. Independence across i then
+implies that {Ai}n
+i=1 is independent of {Bi}n
+i=1, and thus Xy and Xy′ are independent: E[XyXy′] = p2
+n.
+Now we count the number of pairs (y, y′) of each type. For each y there are exactly (q−2) distinct
+nonzero multiples y′ ∈⟨y⟩\ {y}, and |Y | −(q −1) = qm −q choices of y′ not in the one-dimensional
+subspace ⟨y⟩. Therefore,
+E[Z2] ≤(qm −1)pn + (qm −1)(q −2)pn + (qm −1)(qm −q)p2
+n
+= (qm −1)
+
+(q −1)pn + (qm −q)p2
+n
+
+.
+By Paley-Zygmund,
+Pr[Z ≥1] ≥E[Z]2
+E[Z2] ≥
+(qm −1)pn
+(q −1) + (qm −q)pn
+.
+This lower bound goes to 1 as n →∞since
+qmpn = 2m log q · 2−nD+o(n) = 2tn+o(n) →∞,
+and both the numerator and denominator are dominated by this term.
+E
+Experiment Details
+We present a more detailed setup of the experiments in Section 4.3.
+We optimize the models using AdamW with β1 = 0, β2 = 0.999, and base learning rate 3 × 10−4
+with 1000 warm-up steps and cosine decay. The choice of β1 = 0 (so the optimizer is similar to
+RMSprop) is for better optimization performance. Each batch contains all n positive samples (the
+42
+
+Table 1: Reproducibility details for the main experiment.
+Category
+Setting
+Data
+Universe U: alphabet size |Σ| = 26, length 15, |U| = 2615.
+Facts K: |K| = 15145, sampled uniformly without replacement with seed 42.
+Negatives: per step sample size 15145, distribution Unif(U \ K).
+Tokenization
+Tokenization: char-level, vocab size V = 26.
+Positional encoding: sinusoidal (fixed).
+Model
+Architecture: Transformer.
+2 Layers, dmodel = 18/24/36, heads h = 3/4/6, FFN dim dff = 72/96/144.
+Activation: GeLU; pre-LayerNorm; no dropout.
+Output head: Mean Pooling →Layer norm →Linear→Sigmoid producing ˆ
+x(i) ∈
+(0, 1).
+#Trainable parameters: 8767 / 15145 / 33085.
+Precision: fp16
+Objective
+Loss: weighted BCE with weights λF /(λF + 1), 1/(λF + 1).
+Batch composition: all positives + fresh negatives.
+Optimization
+Optimizer: AdamW with (β1, β2) = (0, 0.999) and weight decay 0.01.
+Learning rate: base LR 3 × 10−4; 1000 warm-up steps; cosine decay.
+Training length: 30,000 epochs.
+Grad clip: 1.
+Initialization: PyTorch default.
+Evaluation
+Facts eval: all n facts.
+Non-facts eval: sample size 200k from Unif(U \ K).
+Histogram/KL is based on the discretized output distribution with 50 bins.
+full set K) and n fresh negatives sampled uniformly from U \ K. The positive and negative samples
+are evaluated with a custom weight defined by λF as follows:
+L =
+λF
+λF + 1
+E
+i∼Unif(K)
+
+−ln ˆ
+x(i)
+
++
+1
+λF + 1
+E
+i∼Unif(U\K)
+
+−ln(1 −ˆ
+x(i))
+
+.
+We set the seed to be 42 for all our experiments, and all models are trained for 30000 epochs, at
+which point all losses converge to stable values.
+We consider three different model sizes, corresponding to 0.58 / 1 / 2.18 parameters per fact. For
+each model size, we train a model with λF ∈{0.25, 1, 4, 8} to observe the trade-off between the two
+types of errors, given a fixed memory budget. In Figure 1, we report the confidence distributions of
+training the 1 parameter-per-fact model. The other two sizes are reported in Figure 3 and Figure 4,
+respectively. We note that across different model sizes and λF , the non-fact distribution consistently
+exhibits the heavy tail of hallucinations, whenever the fact distribution is sufficiently concentrated.
+In Table 1, we report the full experimental setup. Our implementation code will be released
+publicly.
+43
+
+10−3
+10−1
+Frequency (log)
+(c) λF = 8
+(a) λF = 4
+0
+0.2
+0.4
+0.6
+0.8
+1
+10−3
+10−1
+Confidence Score ˆ
+x
+Frequency (log)
+(b) λF = 1
+0
+0.2
+0.4
+0.6
+0.8
+1
+Confidence Score ˆ
+x
+(d) λF = 0.25
+Facts
+Non-Facts
+Theoretical optimum
+Figure 3: Output distributions with 15145 facts and 8767 parameters.
+10−3
+10−1
+Frequency (log)
+(a) λF = 8
+(b) λF = 4
+0
+0.2
+0.4
+0.6
+0.8
+1
+10−3
+10−1
+Confidence Score ˆ
+x
+Frequency (log)
+(c) λF = 1
+0
+0.2
+0.4
+0.6
+0.8
+1
+Confidence Score ˆ
+x
+(d) λF = 0.25
+Facts
+Non-Facts
+Theoretical optimum
+Figure 4: Output distributions with 15145 facts and 33085 parameters.
+44

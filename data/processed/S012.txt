@@ -1,0 +1,400 @@
+From Sycophancy to Sensemaking:
+Premise Governance for Human–AI Decision Making
+Raunak Jain1*, Mudita Khurana2,
+John Stephens1, Srinivas Dharmasanam1, Shankar Venkataraman1
+1Intuit, Mountain View, CA, USA
+2Airbnb, San Francisco, CA, USA
+raunak jain1@intuit.com
+Abstract
+As LLMs expand from assistance to decision support, a dangerous pattern emerges: fluent agreement without calibrated
+judgment. Low-friction assistants can become sycophantic,
+baking in implicit assumptions and pushing verification costs
+onto experts, while outcomes arrive too late to serve as reward signals. In deep-uncertainty decisions (where objectives
+are contested and reversals are costly), scaling fluent agreement amplifies poor commitments faster than it builds expertise. We argue reliable human-AI partnership requires a
+shift from answer generation to collaborative premise governance over a knowledge substrate, negotiating only what
+is decision-critical. A discrepancy-driven control loop operates over this substrate: detecting conflicts, localizing misalignment via typed discrepancies (teleological, epistemic,
+procedural), and triggering bounded negotiation through decision slices. Commitment gating blocks action on uncommitted load-bearing premises unless overridden under logged
+risk; value-gated challenge allocates probing under interaction cost. Trust then attaches to auditable premises and evidence standards, not conversational fluency. We illustrate
+with tutoring and propose falsifiable evaluation criteria.
+Introduction
+LLM-based agents excel when feedback is machineverifiable or cheap (tests, proof checkers, simulators) (Xia
+et al. 2025; Chervonyi et al. 2025). In such domains, reliability improves at inference time by externalizing deliberation
+into explicit intermediate structure (trees, graphs, or search
+states) that can be branched, revised, and scored before committing (Yao et al. 2023; Zhou et al. 2024). We target a
+harder regime: deep-uncertainty decisions where objectives
+are contested, feedback is delayed and confounded, and actions are costly to reverse (Rittel and Webber 1973; Marchau
+et al. 2019). Here there is no cheap scoring oracle for intermediate structure: whether causal expectations are credible,
+constraints are binding, and evidence standards are adequate
+is itself a matter of expert judgment. Because realized outcomes unreliably certify decision quality (outcome bias), decisions must be evaluated ex ante by the rigor of the decision
+*Corresponding author
+0The views expressed are the authors’ own and do not necessarily reflect those of their employers (Airbnb, Inc., Intuit Inc., or
+their affiliates). This paper is for informational purposes only and
+does not represent official policy or position.
+basis: the explicit premises and standards that justify action
+under uncertainty (Baron and Hershey 1988; Howard 1988).
+In this regime, a key bottleneck in achieving appropriate reliance is premise governance: whether the action-justifying
+premises (goals, constraints, causal expectations, and evidence standards) are explicit, contestable, and improvable
+across decisions.
+Answer-centric assistance undermines complementarity
+in these settings. Fluent recommendations can conceal loadbearing premises (those whose truth value determines the
+action), shifting verification burden to users and increasing downstream revision cost (Buc
+¸inca, Malaya, and Gajos
+2021; Bansal et al. 2021). Low-friction optimization can
+further bias assistants toward agreement-seeking behavior (sycophancy), harmful precisely when disagreement is
+needed to surface and repair faulty premises (Sharma et al.
+2025). A meta-analysis reveals a complementarity gap:
+human–AI combinations underperform the better of humans alone or AI alone on average, with losses concentrated in decision tasks (Vaccaro, Almaatouq, and Malone
+2024). A plausible contributor is miscalibrated reliance:
+teams lack mechanisms that make it computable when to
+defer, verify, or challenge (Passi, Dhanorkar, and Vorvoreanu 2024), enabling premature commitment under underspecification where implicit assumptions silently harden into
+action-justifying premises.
+Expert teams mitigate this failure mode through collaborative sensemaking (Weick 1995; Klein, Moon, and Hoffman 2006): they maintain a shared artifact that stabilizes
+common ground, localize which premise failed when observations violate expectations, and design diagnostic tests before committing to consequential action. We argue that AI
+assistants should support this same process (Collins et al.
+2024): maintaining a governed decision basis (the causal
+hypotheses and premises currently relied upon) alongside
+the expert’s decision framework (standing objectives, constraints, evidence standards). Because environment feedback
+is ambiguous, progress depends on epistemic partnership:
+the expert adjudicates what counts as valid evidence and acceptable risk, while the assistant helps surface, test, and revise the premises that drive action.
+We frame the required capability as a sensemaking control loop over governed decision bases. Discrepancies (mismatches between committed expectations and new obserarXiv:2602.02378v1 [cs.CL] 2 Feb 2026
+
+vations or assertions) serve as the error signal, triggering
+investigation and negotiation before action. Discrepancies
+are typed by alignment category: teleological (goals, values,
+constraints), epistemic (causal beliefs and expectations), or
+procedural (commitments, evidence standards, and decision
+protocol), which determines the appropriate repair operator.
+Making this executable requires (i) an externalized representation with commitment status (assumed vs. established),
+evidence links, dependency structure, and revision provenance, and (ii) interaction policies that determine when to
+probe, challenge, defer, escalate, or commit under interaction cost. The assistant proposes updates and challenges; the
+substrate validates transitions and alone can finalize consequential commitments.
+Contributions.
+We propose a computable design pattern
+for knowledge-grounded assistants in deep-uncertainty decisions: (i) a governed decision basis where action-justifying
+premises are explicit objects with lifecycle status (DRAFT,
+CONTESTED, COMMITTED, REJECTED) and evidence links;
+(ii) typed discrepancy objects (teleological, epistemic, procedural) that route repair operators (reframe, investigate,
+negotiate) rather than generic reflection; (iii) commitment
+gating that blocks consequential action on uncommitted
+load-bearing premises; and (iv) value-gated challenge that
+enables strategic disagreement by treating probing and challenge as decisions under interaction cost. We operationalize trust as appropriate reliance (Passi, Dhanorkar, and Vorvoreanu 2024): the governed decision basis makes it computable when to accept, defer, verify, or challenge, turning
+trust from a sentiment induced by fluency into an auditable
+team process.
+Motivating Scenario:
+Dr. Di (a physics teacher) uses
+Lev (an LLM-based assistant operating over a persistent
+decision-basis artifact) to generate practice for student Ty
+on Newton’s Third Law. Dr. Di specifies topic coverage and
+a target of 80%+ routine accuracy, and Lev generates drills.
+Ty completes them and reaches 85%. Based on those scores,
+Dr. Di prepares to advance Ty to more complex material.
+In class, however, Ty cannot explain why forces are equal
+and opposite, and he cannot apply the idea in a new context (e.g., swimming rather than collisions). Ty is frustrated:
+he is “doing the work” and getting the right answers, yet he
+still “doesn’t get it.” The proxy outcome (high drill scores)
+looked like progress, but it did not measure Dr. Di’s real objective: transferable understanding that supports later learning. This is a PROCEDURAL discrepancy: the evidence standard used for advancement (routine drill accuracy) fails to
+test the stated mastery criterion (transfer / explanation), so
+commitment should be gated until a discriminating probe is
+run.
+Under our approach, the assistant starts by making Dr.
+Di’s success criteria explicit and durable: what counts as
+mastery, what evidence is required before advancing, and
+when it is acceptable to trade understanding for shortterm score gains (e.g., exam-triage mode). When Ty’s
+drill scores rise but explanation and transfer remain weak,
+Lev does not simply generate more practice. Lev presents
+a decision slice: Objective (transferable understanding),
+load-bearing premise (‘drill score implies transfer’), status (CONTESTED), and a discriminating probe (structured
+teach-back with rubric + near-transfer item) that would
+resolve the gap. Crucially, the slice exposes what would
+change Lev’s recommendation: a short probe that can move
+the contested premise from DRAFT to COMMITTED (or reject it). The probe reveals Ty can execute procedures but
+cannot justify them; Dr. Di switches to an explanation-first
+intervention before advancing, avoiding costly rework later.
+Proposed Framework
+Modern agent architectures optimize answer quality and task
+completion through preference-based post-training and autonomous deliberation (Raheja and Pochhi 2026; Ji et al.
+2025), but lack support for appropriate reliance (Passi,
+Dhanorkar, and Vorvoreanu 2024). Deep-uncertainty assistance requires: (i) negotiation over contested premises
+rather than autonomous answering, (ii) typed routing that
+distinguishes teleological, epistemic, and procedural discrepancies and selects repair operators, and (iii) commitment gating that blocks action when load-bearing premises
+are unestablished. The control objective is to maintain alignment of an evolving decision basis along three axes: teleological (goals and constraints), epistemic (causal beliefs),
+and procedural (evidence standards and protocol), drawing on goal reasoning (Aha, Molineaux, and Mu˜
+noz-Avila
+2018), epistemic alignment (Clark et al. 2025), and belief
+revision (G¨
+ardenfors 1988).
+Alignment axes correspond to substrate object types.
+Teleological objects (goals, constraints, priorities, risk tolerances) ground what counts as success; epistemic objects (causal hypotheses, predictions, mechanism sketches)
+ground what the team believes will happen under intervention; procedural objects (evidence standards and thresholds,
+commitment protocols, role allocations) ground how commitments are adjudicated. Typed routing becomes derivable: the violated object’s type determines the repair operator (REFRAME for teleological, INVESTIGATE for epistemic,
+NEGOTIATE for procedural), making discrepancy handling
+systematic rather than ad-hoc.
+Governed Substrates for Decision Bases
+Appropriate reliance requires an inspectable, persistent artifact that can be audited and revised when expectations are
+violated (Wang and Lu 2025). Recent systems externalize
+instructions, procedures, or state (e.g., plan-guided workflows), but these artifacts typically encode constraints, plans,
+or observations, not action-justifying premises, evidence
+standards, or lifecycle status. We therefore frame alignment
+as convergence over an explicit decision basis rather than
+agreement in fluent dialogue. This view is compatible with
+decision-rationale traditions (IBIS) (Kunz and Rittel 1970),
+but differs in control use: premise status (DRAFT, CONTESTED, COMMITTED), evidence thresholds, and typed dependencies are first-class run-time control state so the assistant can gate consequential commitments and route repair
+(reframe, investigate, or negotiate), not merely document rationale after the decision.
+
+Control mechanisms require substrate affordances.
+Collaborative premise governance depends on three control mechanisms: commitment gating (when is action warranted), typed routing (what kind of misalignment occurred and which repair operator applies), and negotiation (how contested premises are resolved with the expert).
+These mechanisms cannot be bolted on as post-hoc prompts;
+they require a governed substrate that makes them computable: the substrate must (i) separate evidence records
+from commitment-bearing premises, (ii) attach explicit status and standards to premises so actions can be gated, and
+(iii) encode typed dependencies so discrepancies can be diagnosed and routed. By ‘computable’ we mean the substrate
+supports programmatic operations (dependency tracing, status checks, slice extraction) over typed objects with lifecycle
+attributes.
+Why structure (not just better prompting).
+A natural
+objection is that an LLM can already generate detailed justifications on demand. The problem is persuasion vs. provenance: free-form explanations are not an auditable, editable
+decision state. The substrate is not just memory; it is the
+enforcement layer: the LLM proposes updates over a compiled slice, while the substrate validates lifecycle transitions,
+propagates downstream impacts via dependencies, and gates
+commitments when load-bearing premises are uncommitted.
+Prompt text is a projection of state; governance happens outside the model.
+Substrate requirements for decision-basis control.
+A
+premise is an explicit action-justifying claim with lifecycle
+status; a decision framework specifies standing rules (objectives, constraints, evidence thresholds); a decision basis is
+the structured set of premises, evidence, and dependencies
+supporting a specific pending commitment; the governed
+substrate is the persistent enforcement layer that stores and
+validates decision bases across sessions; a decision slice is
+the bounded projection shown for negotiation. To operationalize negotiation, routing, and gating, a governed substrate must support:
+1. Framework objects (grounds negotiation and teleological repair). Goals, constraints, thresholds, and standards
+must be explicit, revisable objects that define what counts
+as acceptable evidence and what commitment means for
+this expert or team.
+2. Lifecycle semantics (enables gating and negotiation triggers). Premises must carry status (DRAFT, CONTESTED,
+COMMITTED, REJECTED) with evidence requirements,
+making it computable when an action may proceed versus when it should defer or require explicit override under risk.
+3. Typed premises and dependency links (enables routing).
+Premises must be typed (teleological, epistemic, or procedural) and linked to the expectations and actions they
+support. This makes discrepancy typing derivable from
+the violated object, rather than inferred from free-form
+text, and routes repair to the appropriate operator (reframe, investigate, or negotiate).
+4. Provenance and immutable evidence logs (enables audit
+and disciplined revision). Evidence and revisions must be
+logged with provenance to support “why did we decide
+X?” queries and to prevent silent premise hardening.
+5. Decision-slice compilation (bounded slice extraction).
+The substrate must support budgeted views that extract
+only decision-critical context (load-bearing premises,
+discrepant evidence, decision consequence, and a small
+set of repair options), rather than exposing full state.
+Premise lifecycle.
+Every premise in the decision basis carries a lifecycle status: DRAFT, CONTESTED, COMMITTED,
+or REJECTED. We use uncommitted to mean DRAFT or CONTESTED. For instance, in our example “drill score implies
+transfer” begins as DRAFT, becomes CONTESTED when Ty
+fails the teach-back, and could be COMMITTED only after a discriminating probe passes. Promotion to COMMITTED is evidence-gated: a premise may be committed only if
+supporting evidence meets the expert’s threshold and does
+not violate committed constraints. This primitive supports
+all three control mechanisms: gating action, focusing negotiation on CONTESTED premises, and making discrepancy computable. The commitment gating rule is: allow
+commit(a) iff all load-bearing premises on a’s dependency
+path are COMMITTED, or the expert explicitly overrides under logged risk.
+Discrepancy-Driven Sensemaking Control Loop
+Recent agent systems support self-repair loops that detect deviations and attribute causes (Zhu et al. 2025; Cruz
+2025), but these loops close within the agent stack. In deepuncertainty decisions, consequential failures are often disputes over premises requiring expert adjudication. Governed
+substrates make collaborative repair computable: one natural
+neurosymbolic decomposition has an LLM controller propose typed operations (revise, probe, defer, escalate) over
+decision slices, while a symbolic substrate validates transitions against lifecycle constraints and alone finalizes consequential commitments (Wang and Lu 2025). This follows a
+broader pattern in LLM systems where the model proposes
+and an external structure/tool constrains or verifies (e.g., deliberate search over explicit states or tool-mediated execution) (Zhou et al. 2024).
+Discrepancy as the error signal (decision-relevant, not
+generic uncertainty).
+Because full causal discovery is infeasible in many real settings, control should target decisionbasis quality: causal structure sufficient to choose the next
+commitment under the team’s decision framework. Following data-frame dynamics (Klein, Moon, and Hoffman 2006),
+progress occurs when evidence repairs the specific premise
+that broke. A discrepancy is therefore a mismatch between
+what the committed basis implies and what is observed or
+asserted next, such that resolving it could change what the
+team should do. Systems should represent discrepancies as
+first-class objects binding: (i) a trigger (observation or expert assertion), (ii) the violated committed expectation or
+disputed premise, and (iii) decision impact (which pending commitment depends on it). Localization is bounded to
+
+the pending commitment’s decision slice; uncertain matches
+produce an unlinked discrepancy that is resolved during negotiation. After a discrepancy is instantiated, the assistant
+selects an epistemic action (probe, defer, escalate, or commit) using the value-gated policy described below.
+Typed routing is substrate-driven.
+Routing should be
+determined by what kind of substrate object was violated.
+If the violated object is a goal, constraint, or priority, the
+discrepancy is TELEOLOGICAL (repair by REFRAME: revise
+goals, constraints, or priorities). If it is a causal hypothesis or
+expectation, it is EPISTEMIC (repair by INVESTIGATE: propose discriminating probes and update expectations). If it is
+a threshold, protocol, or role allocation, it is PROCEDURAL
+(repair by NEGOTIATE: clarify rules for commitment, override, or acceptable risk). This makes type computable from
+the substrate’s typed objects and dependency links, avoiding
+generic reflection.
+Negotiation requires a minimal decision slice.
+Negotiation should be triggered when (i) a discrepancy blocks a
+pending commitment, or (ii) the pending action depends on
+DRAFT or CONTESTED load-bearing premises. Since experts
+cannot inspect full substrate state mid-work, systems should
+present only: the load-bearing premise(s), the discrepant evidence with provenance, what changes if the premise flips,
+and one or two repair options (a targeted probe, or a conservative alternative under explicitly logged risk). Experts
+validate objects and contribute domain judgment; assistants
+track dependencies and generate hypotheses. The slice functions as a cognitive forcing mechanism (Buc
+¸inca, Malaya,
+and Gajos 2021) through focus rather than friction: it bounds
+reliance to load-bearing premises, where load-bearing (on
+the dependency path from pending action to any uncommitted premise) derives from the expert’s committed framework, not the assistant’s editorial judgment.
+Value-gated epistemic control (when to probe, defer, or
+escalate).
+Epistemic control is the policy that responds
+to uncertainty: whether to probe, defer, challenge or escalate, or commit. Appropriate reliance requires that probevs-act be a control decision, not a conversational judgment.
+Low-friction assistants may suppress decision-critical conflicts (sycophancy) (Sharma et al. 2025), but indiscriminate challenge is also costly. Value-of-information principles (Howard 1966; Dong et al. 2026) provide the policy:
+prioritize resolving uncertainty that is both decision-relevant
+(load-bearing for the pending commitment) and decisionsensitive (sensitivity = whether flipping the premise would
+change the recommended action).
+The governed substrate makes this computable: premise
+status indicates what remains contested; dependency links
+indicate which uncertainties affect the pending commitment; evidence thresholds specify what observations would
+discriminate between competing interpretations. When
+decision-relevant uncertainty on the critical path exceeds
+a gate (e.g., multiple load-bearing premises remain CONTESTED, or competing interpretations are unresolved), epistemic repair takes priority: probing and contesting are permitted, but consequential commitment is gated until resolution or explicit override under logged risk. Within epistemic repair, probe selection follows VOI logic: prioritize
+the probe whose expected reduction in decision-relevant
+uncertainty exceeds its interaction cost (Arrow and Fisher
+1974). This operationalizes strategic disagreement (Jain and
+Khurana 2026): the assistant can justify why it is probing (a
+contested, load-bearing premise), deferring (VOI is low under current budget), or escalating (high-stakes discrepancy
+requiring expert adjudication).
+Conclusion
+We argue the field should reorient from answer quality to collaborative causal sensemaking (Jain and Khurana 2026). The goal is partnership: assistants that detect
+decision-critical misalignment with the expert, make negotiation tractable (not burdensome), and record resolutions
+so common ground compounds across decisions. Under this
+shift, trust attaches to explicit, auditable premises and evidence standards, not conversational fluency.
+Current assistants optimize for trust via fluency and agreement, producing miscalibrated reliance in deep-uncertainty
+settings where load-bearing premises remain implicit and
+disagreement is suppressed (Sharma et al. 2025; Passi,
+Dhanorkar, and Vorvoreanu 2024; Vaccaro, Almaatouq, and
+Malone 2024). Without this shift, we scale fluent agreement
+faster than calibrated judgment, amplifying poor decisions
+in domains where outcomes arrive too late to correct course
+(education, clinical reasoning, policy design).
+Achieving this requires a minimal contract enforced by
+three guarantees: (G1) no consequential commitment is presented as justified when any load-bearing premise is uncommitted, unless the expert explicitly overrides under logged
+risk; (G2) challenges are anchored to named violated objects
+(goal, expectation, or protocol) and always come with a targeted repair option (reframe, probe, or negotiate); (G3) every update is provenance-tracked so the basis is inspectable
+and reversible rather than rhetorically defended. The division of labor is explicit: the assistant proposes and tests; the
+expert governs goals, evidence standards, and final commitments.
+This position yields testable predictions: relative to
+answer-centric assistants, governed substrates should (i)
+reduce
+time-to-commit
+at
+matched
+outcome
+quality,
+(ii) improve trust calibration (fewer inappropriate accepts/overrides), and (iii) reduce cross-session re-litigation
+by persisting commitments with provenance, thereby narrowing the complementarity gap in decision tasks (Buc
+¸inca,
+Malaya, and Gajos 2021; Bansal et al. 2021; Passi,
+Dhanorkar, and Vorvoreanu 2024). Key open questions include how to learn escalation policies from expert feedback,
+what minimal substrate primitives suffice in practice, and
+how to represent irreconcilable stakeholder conflicts. We
+invite the community to treat collaborative premise governance as a core requirement for reliable human-AI teaming
+under deep-uncertainty decisions.
+
+References
+Aha, D. W.; Molineaux, M.; and Mu˜
+noz-Avila, H. 2018.
+Goal Reasoning: Foundations, Emerging Applications, and
+Prospects. AI Magazine, 39(2): 3–24.
+Arrow, K. J.; and Fisher, A. C. 1974. Environmental Preservation, Uncertainty, and Irreversibility*.
+The Quarterly
+Journal of Economics, 88(2): 312–319.
+Bansal, G.; Wu, T.; Zhou, J.; Fok, R.; Nushi, B.; Kamar,
+E.; Ribeiro, M. T.; and Weld, D. S. 2021. Does the Whole
+Exceed its Parts? The Effect of AI Explanations on Complementary Team Performance. arXiv:2006.14779.
+Baron, J.; and Hershey, J. 1988. Outcome Bias in Decision
+Evaluation. Journal of personality and social psychology,
+54: 569–79.
+Buc
+¸inca, Z.; Malaya, M. B.; and Gajos, K. Z. 2021. To Trust
+or to Think: Cognitive Forcing Functions Can Reduce Overreliance on AI in AI-assisted Decision-making. Proceedings
+of the ACM on Human-Computer Interaction, 5(CSCW1):
+1–21.
+Chervonyi, Y.; Trinh, T. H.; Olˇ
+s´
+ak, M.; Yang, X.; Nguyen,
+H. H.; Menegali, M.; Jung, J.; Kim, J.; Verma, V.; Le, Q. V.;
+and Luong, T. 2025. Gold-medalist Performance in Solving Olympiad Geometry with AlphaGeometry2. Journal of
+Machine Learning Research, 26(241): 1–39.
+Clark, N.; Shen, H.; Howe, B.; and Mitra, T. 2025. Epistemic Alignment: A Mediating Framework for User-LLM
+Knowledge Delivery. arXiv:2504.01205.
+Collins, K. M.; Sucholutsky, I.; Bhatt, U.; Chandra, K.;
+Wong, L.; Lee, M.; Zhang, C. E.; Zhi-Xuan, T.; Ho, M.;
+Mansinghka, V.; Weller, A.; Tenenbaum, J. B.; and Griffiths,
+T. L. 2024. Building machines that learn and think with people. Nature Human Behaviour, 8: 1851–1863.
+Cruz, C. 2025.
+VIGIL: A Reflective Runtime for SelfHealing Agents. arXiv:2512.07094.
+Dong, Y. R.; Hu, T.; Hui, Z.; Zhang, C.; Vuli´
+c, I.; Bobu,
+A.; and Collier, N. 2026. When Should AI Ask: Decisiontheoretic Adaptive Communication for LLM Agents. arXiv
+preprint arXiv:2601.06407.
+Value-of-information framework for agent communication decisions.
+G¨
+ardenfors, P. 1988. Knowledge in Flux: Modeling the Dynamics of Epistemic States. Cambridge, MA: MIT Press.
+Howard, R. A. 1966.
+Information Value Theory.
+IEEE
+Transactions on Systems Science and Cybernetics, 2(1): 22–
+26.
+Howard, R. A. 1988.
+Decision Analysis: Practice and
+Promise. Management Science, 34(6): 679–695.
+Jain, R.; and Khurana, M. 2026. Collaborative Causal Sensemaking: Closing the Complementarity Gap in Human-AI
+Decision Support. arXiv:2512.07801.
+Ji, Y.; Li, J.; Xiang, Y.; Ye, H.; Wu, K.; Yao, K.; Xu, J.;
+Mo, L.; and Zhang, M. 2025.
+A Survey of Test-Time
+Compute: From Intuitive Inference to Deliberate Reasoning.
+arXiv:2501.02497.
+Klein, G.; Moon, B.; and Hoffman, R. 2006. Making Sense
+of Sensemaking 2: A Macrocognitive Model. IEEE Intelligent Systems, 21(5): 88–92.
+Kunz, W.; and Rittel, H. 1970. Issues as Elements of Information Systems. Number no. 131 in California. University.
+Center for Planning and Development Research. Working
+paper, no. 131. Institute of Urban and Regional Development, University of California.
+Marchau, V. A. W. J.; Walker, W. E.; Bloemen, P. J. T. M.;
+and Popper, S. W. 2019. Decision Making under Deep Uncertainty: From Theory to Practice.
+Cham, Switzerland:
+Springer. ISBN 978-3-030-05251-5.
+Passi, S.; Dhanorkar, S.; and Vorvoreanu, M. 2024. Appropriate reliance on Generative AI: Research synthesis. Technical Report MSR-TR-2024-7, Microsoft.
+Raheja, T.; and Pochhi, N. 2026.
+From RLHF to Direct
+Alignment: A Theoretical Unification of Preference Learning for Large Language Models. arXiv:2601.06108.
+Rittel, H. W. J.; and Webber, M. M. 1973. Dilemmas in a
+general theory of planning. Policy Sciences, 4(2): 155–169.
+Sharma, M.; Tong, M.; Korbak, T.; Duvenaud, D.; Askell,
+A.; Bowman, S. R.; Cheng, N.; Durmus, E.; Hatfield-Dodds,
+Z.; Johnston, S. R.; Kravec, S.; Maxwell, T.; McCandlish, S.;
+Ndousse, K.; Rausch, O.; Schiefer, N.; Yan, D.; Zhang, M.;
+and Perez, E. 2025. Towards Understanding Sycophancy in
+Language Models. arXiv:2310.13548.
+Vaccaro, M.; Almaatouq, A.; and Malone, T. W. 2024. When
+combinations of humans and AI are useful: A systematic review and meta-analysis. Nature Human Behaviour, 8: 2293–
+2303.
+Wang, Y.; and Lu, Y. 2025. Interaction, Process, Infrastructure: A Unified Framework for Human-Agent Collaboration.
+arXiv:2506.11718.
+Weick, K. E. 1995. Sensemaking in Organizations. Thousand Oaks, CA: SAGE.
+Xia, C. S.; Wang, Z.; Yang, Y.; Wei, Y.; and Zhang, L. 2025.
+Live-SWE-agent: Can Software Engineering Agents SelfEvolve on the Fly? arXiv:2511.13646.
+Yao, S.; Yu, D.; Zhao, J.; Shafran, I.; Griffiths, T. L.; Cao,
+Y.; and Narasimhan, K. R. 2023.
+Tree of Thoughts: Deliberate Problem Solving with Large Language Models. In
+Thirty-seventh Conference on Neural Information Processing Systems.
+Zhou, A.; Yan, K.; Shlapentokh-Rothman, M.; Wang, H.;
+and Wang, Y.-X. 2024. Language agent tree search unifies
+reasoning, acting, and planning in language models. In Proceedings of the 41st International Conference on Machine
+Learning, ICML’24. JMLR.org.
+Zhu, K.; Liu, Z.; Li, B.; Tian, M.; Yang, Y.; Zhang, J.; Han,
+P.; Xie, Q.; Cui, F.; Zhang, W.; Ma, X.; Yu, X.; Ramesh, G.;
+Wu, J.; Liu, Z.; Lu, P.; Zou, J.; and You, J. 2025. Where
+LLM Agents Fail and How They can Learn From Failures.
+arXiv:2509.25370.

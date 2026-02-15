@@ -1,0 +1,634 @@
+Enhancing Business Analytics through Hybrid
+Summarization of Financial Reports
+Tohida Rehman1∗
+Jadavpur University, Kolkata, India.
+tohidarehman.it@jadavpuruniversity.in
+Abstract. Financial reports and earnings communications contain large volumes
+of structured and semi-structured information, making detailed manual analysis
+inefficient. Earnings conference calls provide valuable evidence about a firm’s
+performance, outlook, and strategic priorities. The manual analysis of lengthy call
+transcripts requires substantial effort and is susceptible to interpretive bias and
+unintentional error. In this work, we present a hybrid summarization framework
+that combines extractive and abstractive techniques to produce concise and factually reliable Reuters_style summaries from the ECTSum dataset. The proposed
+two-stage pipeline first applies the LexRank algorithm to identify salient sentences, which are subsequently summarized using fine-tuned variants of BART
+and PEGASUS designed for resource-constrained settings. In parallel, we finetune a Longformer Encoder–Decoder (LED) model to directly capture long-range
+contextual dependencies in financial documents.
+Model performance is evaluated using standard automatic metrics, including
+ROUGE, METEOR, MoverScore, and BERTScore, along with domain-specific
+variants such as SciBERTScore and FinBERTScore. To assess factual accuracy, we further employ entity-level measures based on source-precision and
+F1-target. The results highlight complementary trade-offs between approaches:
+long-context models yield the strongest overall performance, while the hybrid
+framework achieves competitive results with improved factual consistency under
+computational constraints. These findings support the development of practical
+summarization systems for efficiently distilling lengthy financial texts into usable
+business insights.
+Keywords: extractive summarization, abstractive summarization, natural language generation, financial documents, deep learning
+1
+Introduction
+The rapid growth of long and complex financial documents poses a significant challenges
+for efficiently extracting meaningful summaries. Transformer-based pre-trained models
+have demonstrated remarkable success across various NLP applications, including academic research, weather forecasting, social media analytics and many more. Motivated
+by these advances, this study applies pre-trained transformer models to domain-specific
+financial transcripts and reports to generate concise, bullet-point summaries that retain
+essential information.
+∗corresponding author
+arXiv:2601.09729v1 [cs.CL] 28 Dec 2025
+
+2
+Rehman et al.
+Summarizing textual information is inherently challenging, and the exponential
+increase in data has made manual summarization impractical. In financial text summarization, the main task is to distill the most critical information from single or multiple
+documents into a brief, coherent and non-repetitive summaries. Financial documents, in
+particular, are typically lengthy and often combine narrative text with tabular representations, further complicating the summarization process. Automatic text summarization
+aims to generate a condensed version of a document using computational methods that
+preserve its essential information. Generally, summarization techniques can be classified
+as extractive or abstractive. Extractive approaches identify and select the most important sentences or phrases from the source text, whereas abstractive approaches aim to
+understand the entire document to finds its main idea, similar to how humans does the
+summarization [1].
+In the financial domain, summarization must not only shorten lengthy reports but
+also need to ensure factual accuracy. Hallucination or fabricated information poses a
+serious problem, as financial data is highly sensitive and error-prone interpretations
+can mislead analysts and investors. In natural language generation, hallucinations are
+broadly divided into two categories. The first type, known as intrinsic, occurs when the
+generated content contradicts or misrepresents information from the source. The second
+type, extrinsic, appears when the model introduces additional details that cannot be
+verified against the original text [2]. Such issues reduce the reliability and usefulness of
+automatically generated summaries, especially in domains like finance, science, medical
+and law, where factual precision is critical.
+Large pre-trained language models achieve strong results in summarization, yet their
+computational demands pose challenges for long financial texts [2]. Domain-specific
+fine-tuning provides a feasible alternative. This work addresses earnings call transcript
+summarization through hybrid extractive–abstractive approaches and a Longformer Encoder–Decoder (LED) model for handling long-context financial documents.
+We evaluated our framework using the ECTSum dataset [3], which comprises long
+and unstructured earnings call transcripts paired with expert-written bullet-point summaries derived from Reuters articles. This dataset provides a realistic benchmark for
+assessing both content quality and factual consistency in financial summarization tasks.
+The main contributions of this work are as follows:
+1. We propose a hybrid summarization framework for resource-constrained settings
+that integrates LexRank-based extractive sentence selection with fine-tuned transformer models, including BART and PEGASUS, for summarizing long financial
+documents.
+2. We also employed the Longformer Encoder-Decoder (LED) [4] pre-trained model
+to capture the complete essence of lengthy transcript summarization within the
+ECTSum [3] financial dataset.
+3. We evaluated all model performances using standard automatic metrics, including
+ROUGE [5], METEOR [6], MoverScore [7], and BERTScore [8], along with its
+domain-specific variants, SciBERTScore [9] and FinBERTScore [10]. Furthermore,
+we assess factual consistency for each entity in the generated Reuters_summary
+using precision-source, precision-target, recall-target, and F1-target metrics [11].
+
+Rehman et al.
+3
+2
+Literature Review
+Text summarization has been extensively studied across a wide range of domains such
+as law, scientific research, biomedicine, news media, and social platforms, using both
+extractive and abstractive approaches [1]. In contrast, comparatively fewer studies have
+focused on financial text summarization, largely due to the length, complexity, and
+unstructured nature of financial documents.
+Early work in this area focused on financial news summarization. De Oliveira et
+al. [12] developed a system based on lexical cohesion to generate concise summaries of
+Reuters financial news. Yang et al. [13] proposed a mobile-optimized system leveraging
+a fractal summarization model, which produced hierarchical and interactive summaries
+suitable for real-time financial information access in wireless environments. Filippova
+and Strube [14] applied summarization to financial news from multiple sources for
+short-term trading analysis.
+Subsequent studies began to address long-form financial documents using neural
+models. Zhang et al. [15] proposed a hybrid extractive–abstractive framework (EAPC)
+that incorporated pointer and coverage mechanisms to reduce repetition and handle
+out-of-vocabulary terms. The integration of pre-trained word embeddings further improved semantic representation and summarization quality in both news and scientific
+domains [16,17,18]. Paul et al. [19] introduced a financial news dataset consisting of
+approximately 2,000 Bloomberg articles paired with human-written summaries and
+demonstrated the use of deep learning models within an interactive summarization
+framework.
+For financial report summarization, Agrawal et al. [20] proposed a multi-task model
+that jointly performs stock movement prediction and industry classification on 10-K
+filings. El-Haj and Ogden [21] applied a TF–IDF-based clustering method for extractive
+summarization using the FNS shared task dataset. La Quatra and Cagliero [22] introduced a Sentence-BERT-based clustering approach to capture deeper semantic relations
+among sentences. Building upon these efforts, Shukla et al. [23] developed a T5-based
+extractive summarization model, later extending it with GPT-3 for the FNS shared task,
+which further improved summarization quality. Orzhenovskii et al. [24] employed a
+pre-trained T5 model to generate summaries of financial documents, achieving strong
+results.
+Vanetik et al. [25] proposed a neural extractive summarization approach that uses
+advanced sentence representations and document modeling to summarize long financial
+reports, outperforming baselines on the FNS 2021 dataset. More recently, Xie et al. [26]
+introduced FinBen, a large-scale benchmark comprising 42 datasets across 24 financial
+tasks for evaluating large language models.
+Cardinaels et al. [27] compared algorithmic and management prepared summaries
+of earnings releases, finding that automatic summaries were less positively biased,
+leading investors to make more conservative judgments. The “ECT-BPS” framework [3]
+generated Reuters-style summaries by extracting and paraphrasing informative sentences
+from earnings calls. Tian et al. [28] proposed two LLM-based frameworks “AgenticIR”
+and “DecomposedIR” for summarizing templated financial reports, revealing a trade-off
+between brevity and comprehensiveness. “ECT-SKIE”proposed by Huang et al. [29],
+employed a self-supervised, information-theoretic approach to extract key insights from
+
+4
+Rehman et al.
+earnings call transcripts. Chen et al. [30] proposed “forward-looking claim planning”
+for earnings calls, introducing methods to generate accurate, forward-looking arguments
+using transcripts collected from “SeekingAlpha”.
+In this work, we build upon prior research by evaluating hybrid extractive–abstractive
+summarization strategies and long-context transformer models on the ECTSum dataset
+under constrained computational settings, with a particular focus on factual reliability.
+3
+Methodology
+In this section, we describe the pre-trained language models used in our fine-tuning
+pipeline. The following models were selected:
+3.1
+Input Selection using LexRank
+To handle the token limits of pre-trained language models, we applied LexRank to
+extract the most salient sentences from earnings call transcripts. Each transcript was
+condensed into up to 15 key sentences, approximately 4,000 tokens. These sentences
+are used as input for fine-tuning the BART and PEGASUS models. This extractive step
+serves two purposes: it ensures that inputs remain within transformer token limits and
+concentrates the summarization process on the most salient content.
+3.2
+BART
+BART [31] is a transformer-based sequence-to-sequence model that combines a bidirectional encoder, similar to BERT, with an auto-regressive decoder inspired by GPT. It
+employs activation functions such as GeLU instead of ReLU and incorporates several text
+corruption strategies, including token masking, text infilling, and sentence permutation,
+to improve its contextual understanding. BART used functions during pre-training as a
+denoising autoencoder. It helps to input documents are deliberately corrupted and the
+model learns to reconstruct the original text by minimizing cross-entropy loss between
+the predicted and reference sequences. This design enables strong performance across a
+range of natural language generation and other tasks. The model is available in two main
+configurations: BART-base and BART-large. The BART-base configuration consists of
+6 encoder and 6 decoder layers, each with a hidden dimension of 768 and 12 attention
+heads. In contrast, the BART-large variant expands to 12 encoder and 12 decoder layers,
+with a hidden size of 1024 and 16 attention heads. The BART-base model contains
+approximately 139 million parameters. The BART-large model contains approximately
+406 million parameters. Both configurations demonstrate strong performance across
+various natural language generation tasks.
+3.3
+PEGASUS
+PEGASUS [32] is a transformer based encoder–decoder model trained on massive
+text corpora using a pre-training objective. It is specifically designed for the task of
+abstractive summarization. It employs the Gap Sentence Generation (GSG) strategy,
+
+Rehman et al.
+5
+where multiple entire sentences mainly the most important ones are masked. Then
+generate as a single output sequence. This approach enables the model to capture
+summarization patterns more effectively than traditional span-masking objectives. The
+PEGASUS-base architecture consists of 12 encoder and 12 decoder layers, each with a
+hidden dimension of 768 and 12 attention heads. In the PEGASUS-large configuration,
+both the encoder and decoder contain 16 layers, with representations of hidden dimension
+1024 and 16 attention heads. The PEGASUS-base variant comprises around 223 million
+trainable parameters, whereas the PEGASUS-large version includes roughly 568 million.
+Both configurations are widely used for text summarization tasks.
+3.4
+LED
+The Longformer Encoder–Decoder (LED) [4] model is designed to efficiently process
+long input sequences. Its architecture combines sliding window and dilated sliding
+window attention mechanisms to extend the Transformer’s capacity for long-context
+modeling. The model consists of both encoder and decoder stacks. Unlike standard
+Transformers that rely entirely on full self-attention, the encoder uses a combination of
+local and global attention structures. This design significantly reduces computational
+cost while preserving contextual understanding. The decoder, in contrast, applies full
+self-attention to all encoded tokens and previously generated positions. Because pretraining LED from scratch is computationally demanding, [4] initialized its parameters
+using those of BART, maintaining the same number of layers and hidden dimensions.
+This initialization allows LED to handle lengthy documents efficiently while inheriting
+BART’s robust linguistic representations. Fine-tuning further adapts the model through
+supervised learning, refining its ability to generate coherent and contextually accurate
+summaries while minimizing the need for extensive labeled data.
+Figure 1 presents a schematic of the proposed hybrid summarization framework,
+where extractive sentence selection is followed by abstractive summarization, while a
+Longformer Encoder–Decoder (LED) is employed in parallel to handle long-context
+earnings call transcripts.
+4
+Experimental Setup
+This section describes the dataset, implementation details including preprocessing steps,
+and evaluation metrics used in our study.
+4.1
+Dataset
+We used the ECTSum dataset introduced by Mukherjee et al. [3]. The dataset contains
+Earnings Call Transcripts (ECT_document) of publicly listed companies, collected from
+The Motley Fool, a financial news platform that regularly publishes company earnings
+reports. The corpus includes transcripts from companies listed in the Russell 3000 Index,
+covering the period between January 2019 to April 2022.
+Each record in the dataset consists of an ECT_document paired with its corresponding Reuters_summary, which is considered the ground-truth reference. The dataset
+
+6
+Rehman et al.
+Fig. 1: Overview of the proposed hybrid extractive–transformer framework for financial
+document summarization.
+was split into training, validation, and test subsets (70%, 10%, and 20%), with 1,681,
+249, and 495 samples, respectively.
+Based on simple whitespace-based segmentation, the average token counts for
+ECT_document in the training, validation, and test sets were 2,860, 2,769, and 2,818.
+The corresponding Reuters_summary entries contained an average of 44, 42, and 43
+tokens, respectively.
+4.2
+Implementation Details
+All experiments were performed on Google Colab using an NVIDIA T4 GPU. The setup
+was chosen due to limited computational resources.
+We first cleaned the dataset by removing extra whitespace and keeping only samples
+where the Earnings Call Transcripts (ECTs) had at least 20 tokens and the summaries
+had a minimum of 3 tokens. The generated summaries were restricted to less than 512
+tokens, and input abstracts were allowed up to a maximum of 4096 tokens.
+Fourpre-trainedlanguagemodelsfromtheHuggingFaceHubwereused:BART-base1,
+BART-large2, PEGASUS-large3, and LED-base-163844. Each model was fine-tuned
+for three epochs.
+For BART-base, BART-large, and PEGASUS-large, training was done with a
+learning rate of 4e-5, batch size of 1, and a generation length of 128 tokens. The
+maximum input length was set to 1024 tokens with truncation=True and output
+tokens to 128. For LED-base-16384, we used a batch size of 4 for both training and
+1https://huggingface.co/facebook/bart-base
+2https://huggingface.co/facebook/bart-large
+3https://huggingface.co/google/pegasus-large
+4https://huggingface.co/allenai/led-base-16384
+
+Rehman et al.
+7
+validation, with an input limit of 4096 tokens and truncation=True and output tokens
+to 512.
+Before fine-tuning the BART and PEGASUS models, the LexRank algorithm was
+applied to extract the most relevant sentences from each ECT. For every transcript,
+LexRank selected up to 15 sentences with a total cap of 4,000 tokens. These extracted
+sentences were then used as input for fine-tuning.
+This step helped reduce document length while retaining the essential information needed for summarization. It also allowed efficient processing within a resourceconstrained setup.
+4.3
+Evaluation Metrics
+All fine-tuned model performances were evaluated using standard automatic summarization metrics: including ROUGE [5], METEOR [6], BERTScore [8], SciBERTScore [9],
+MoverScore [7] and FinBERTScore [10]. These metrics assess the quality of the generated Predicted_summary in comparison with the human-written Reuters_summary.
+ROUGE measures word overlap. ROUGE-1 and ROUGE-2 capture unigram and bigram
+matches, while ROUGE-L identifies the longest common subsequence. METEOR evaluates sentence-level alignment by considering word order and synonyms. MoverScore
+and BERTScore assess semantic similarity using contextual embeddings. MoverScore
+uses Word Mover’s distance, whereas BERTScore calculates cosine similarity between
+BERT-based token embeddings.
+The modified metric SciBERTScore uses SciBERT, pre-trained on scientific texts, to
+capture more domain-specific information than general BERT. For financial summarization, we used FinBERTScore computed using ProsusAI/FinBERT available on Hugging
+Face5, a model pre-trained on financial texts to capture domain-specific semantics [10].
+While these metrics measure fluency and relevance, they may fail to capture factual
+consistency [33]. To address this, we used entity-level metrics from [11] to verify factual
+correctness in the Predicted_summary. Together, these metrics assess the lexical, semantic, and factual accuracy of summaries from ECT_document to Reuters_summary.
+Let N (𝑡) represent the named entities in the Reuters_summary, N (ℎ) the entities in the Predicted_summary, and N (ℎ∩𝑠) the entities shared between the
+Predicted_summary and the ECT_document. For multi-word entities, partial matches
+were accepted if any part of the entity appeared in the source. Precision-source( prec_s),
+calculated as,
+𝑝𝑟𝑒𝑐𝑠= N (ℎ∩𝑠)
+N (ℎ)
+(1)
+This score represents how many entities from the Predicted_summary are also
+present in the original ECT_document. A lower 𝑝𝑟𝑒𝑐𝑠suggests hallucinated or missing
+entities. Entity-level accuracy with respect to the human-written Reuters_summary
+is defined in terms of Precision-target (prec_t), Recall-target (recall_t), and F1score (F1_t) as follows:
+𝑝𝑟𝑒𝑐𝑡= N (ℎ∩𝑡)
+N (ℎ)
+(2)
+5https://huggingface.co/ProsusAI/finbert
+
+8
+Rehman et al.
+𝑟𝑒𝑐𝑎𝑙𝑙𝑡= N (ℎ∩𝑡)
+N (𝑡)
+(3)
+𝐹1_𝑡= 2 · (𝑝𝑟𝑒𝑐𝑡· 𝑟𝑒𝑐𝑎𝑙𝑙𝑡)
+𝑝𝑟𝑒𝑐𝑡+ 𝑟𝑒𝑐𝑎𝑙𝑙𝑡
+(4)
+Here, N (ℎ∩𝑡) denotes the common entities between the Predicted_summary and
+the Reuters_summary.
+These entity-based metrics can be computed in two forms. In the first, entities are
+treated as unique sets, ignoring repeated mentions. In the second, entities are treated
+as lists, where each occurrence is checked individually. Following [11], we denote the
+set-based version as 𝑝𝑟𝑒𝑐𝑈
+𝑠, 𝑝𝑟𝑒𝑐𝑈
+𝑡, 𝑟𝑒𝑐𝑎𝑙𝑙𝑈
+𝑡, and 𝐹1𝑈
+𝑡, and the list-based version as
+𝑝𝑟𝑒𝑐𝑁𝑈
+𝑠
+, 𝑝𝑟𝑒𝑐𝑁𝑈
+𝑡
+, 𝑟𝑒𝑐𝑎𝑙𝑙𝑁𝑈
+𝑡
+, and 𝐹1𝑁𝑈
+𝑡
+.
+5
+Results
+This section presents the experimental results on the ECTSum dataset. All fine-tuned
+models were evaluated using ROUGE-1, ROUGE-2, ROUGE-L, METEOR, MoverScore, BERTScore, SciBERTScore, and FinBERTScore. Table 1 summarizes the performance of the models.
+The LED-base-16384 model achieved the highest overall performance, particularly
+for long transcripts, as reflected in ROUGE-1, ROUGE-2, METEOR, MoverScore and
+FinBERTScore. Both BART-large and PEGASUS-large performed competitively on
+the dataset with other metrics. BART-large achieved the best BERTScore and SciBERTScore, while PEGASUS-large obtained the highest ROUGE-L score.
+When compared with the ECTSum benchmark reported by Mukherjee et al. [3],
+which achieved ROUGE-L, ROUGE-1, and ROUGE-2 scores of 0.514, 0.467, and 0.307
+respectively, our fine-tuned models obtained relatively lower scores.This difference
+can be attributed to limited computational resources, shorter input lengths, and fewer
+fine-tuning epochs. Despite these constraints, the LED model effectively captured the
+essential narrative flow of the financial transcripts and generated coherent, contextually
+relevant summaries.
+Model Name
+ROUGE-1 ROUGE-2 ROUGE-L METEOR MoverScore BERTScore SciBERTScore FinBERTScore
+BART-base
+30.40
+17.83
+27.15
+25.63
+20.76
+87.78
+69.01
+68.40
+BART-large
+34.21
+19.25
+29.13
+29.49
+23.48
+88.11
+69.62
+69.84
+PEGASUS-large
+34.40
+22.09
+31.80
+32.51
+22.29
+87.42
+69.32
+70.43
+LED-base-16384
+37.29
+22.39
+31.10
+34.07
+24.27
+88.09
+69.42
+70.75
+Table 1: Model performance of model-generated summaries (Predicted_summary) on the
+ECTSum dataset using standard metrics.
+Table 2 demonstrates the factual consistency evaluation of model-generated summaries on the ECTSum dataset. In all evaluations, the original ECT_document was used
+as the reference input to ensure a consistent basis for comparison across models.
+
+Rehman et al.
+9
+The fine-tuned LED-base-16384 model achieved the highest score in terms of
+precision-source (𝑝𝑟𝑒𝑐𝑁𝑈
+𝑠
+, 𝑝𝑟𝑒𝑐𝑈
+𝑠) and recall-target (𝑟𝑒𝑐𝑎𝑙𝑙𝑈
+𝑡) scores for both source
+and target entities. This indicates that it generated fewer hallucinated entities and maintainedstrongeralignmentwiththefactualcontentoftheinputtranscripts(ECT_document).
+However, its relatively lower F1-target scores suggest a trade-off between precision and
+recall, as the model tended to omit certain relevant entities while focusing on preserving
+core factual details. This behavior can be linked to its long-input handling mechanism,
+where attention is concentrated on prominent sections of the transcript, occasionally
+overlooking secondary information.
+In contrast, the fine-tuned PEGASUS-large model obtained the highest precisiontarget (𝑝𝑟𝑒𝑐𝑁𝑈
+𝑡
+, 𝑝𝑟𝑒𝑐𝑈
+𝑡), recall-target (𝑟𝑒𝑐𝑎𝑙𝑙𝑁𝑈
+𝑡
+), and F1-target (𝐹1𝑁𝑈
+𝑡
+, 𝐹1𝑈
+𝑡) scores.
+This performance reflects a better balance between factual coverage and entity accuracy,
+likely resulting from the use of ranking-based shorter input segments during fine-tuning,
+which enhances focus on key content while slightly reducing precision-source values.
+Model Name
+𝑝𝑟𝑒𝑐𝑁𝑈
+𝑠
+𝑝𝑟𝑒𝑐𝑈
+𝑠
+𝑝𝑟𝑒𝑐𝑁𝑈
+𝑡
+𝑟𝑒𝑐𝑎𝑙𝑙𝑁𝑈
+𝑡
+𝐹1𝑁𝑈
+𝑡
+𝑝𝑟𝑒𝑐𝑈
+𝑡
+𝑟𝑒𝑐𝑎𝑙𝑙𝑈
+𝑡
+𝐹1𝑈
+𝑡
+BART-base
+74.02
+71.36
+60.85
+31.66
+35.08
+58.23
+34.65
+37.40
+BART-large
+75.47
+72.36
+58.73
+42.02
+40.97
+55.32
+42.79
+41.34
+PEGASUS-large
+72.35
+64.88
+67.75
+66.12
+56.05
+62.87
+42.25
+45.03
+LED-base-16384
+80.93
+77.49
+53.72
+49.12
+42.54
+50.55
+50.03
+42.71
+Table 2: Factual consistency evaluation of model-generated summaries (Predicted_summary)
+on the ECTSum dataset.
+6
+Case Study
+In this section, we present example cases illustrating the outputs of fine-tuned models on
+the ECTSum dataset. The analysis highlights both accurate and erroneous generations
+in the Predicted_summary compared to the human-written Reuters_summary. In
+each case, yellow marks factual errors or hallucinated entities. In this case study, the
+cyan color highlights the correctly generated phrases or entity from the input that are
+not present in the Reuters_summary.
+Figure 2 illustrates summaries generated by various models for the ECTSum dataset.
+The fine-tuned BART-base and BART-large models produce a brief but factually correct
+summary, capturing part of the key information. The PEGASUS-large model generates
+slightly more detailed summaries, successfully including additional accurate context
+from the transcript. However, it also duplicates some phrases and occasionally repeats
+figures unnecessarily as “q4 adjusted earnings per share $2.94”. LED produces errors
+such as reporting “$5.70 per diluted share” for Q4, which corresponds to full-year
+earnings per share rather than Q4, and is therefore factually inaccurate. Additionally, the
+model incorrectly generated q4 adjusted pre-tax income of “$3.1 billion”, whereas the
+actual fourth-quarter pre-tax income was $668 million.
+The case study demonstrates that summarization models can convey the overall
+financial context, but maintaining accuracy for numbers and named entities is still
+
+10
+Rehman et al.
+difficult. Mistakes, such as reporting incorrect earnings, underscore the importance of
+verifying figures and applying checks for entities and numerical consistency to ensure
+reliable summaries.
+Reuters_summary: “compname posts q4 earnings per share $2.88.
+q4 adjusted earnings per share $2.94.”
+BART-base: “q4 adjusted earnings per share $2.94.”
+BART-large: “q4 adjusted earnings per share $2.94.
+PEGASUS-large:
+“compname
+reports
+q4
+adjusted
+earnings
+per
+share
+of
+$2.94.
+q4 adjusted earnings per share $2.94. ”
+LED: “compname reports q4 adjusted earnings per share of $2.94.
+compname posts fourth quarter 2021 adjusted earnings of $1.3 billion ,
+or
+$5.70 per diluted share .
+q4 adjusted pre-tax income of $3.1 billion , an increase of $26 million from the prior quarter .
+expects q1 global o&p utilization rate to be in the mid-90s. ”
+Fig. 2:
+Comparison
+between
+the
+Reuters_summary
+(ground-truth
+reference)
+and
+the
+model-generated
+Predicted_summary
+from
+the
+ECTSum
+test
+dataset.
+The
+input
+ECT_document
+and
+the
+Reuters_summary
+are
+sourced
+from
+https://www.fool.com/earnings/call-transcripts/2022/01/28/
+phillips-66-psx-q4-2021-earnings-call-transcript/.
+7
+Conclusion and Future Work
+Fine-tuned transformer models can generate coherent and contextually relevant summaries for long financial transcripts. The fine-tuned LED model achieved the highest precision-source and performed best on METEOR, MoverScore, FinBERTScore,
+ROUGE-1,andROUGE-2scores.Thefine-tunedBART-largemodelexcelledinBERTScore
+and SciBERTScore, while PEGASUS obtained the best F1-target as well as ROUGE-L
+, balancing factual coverage and entity accuracy.
+Future work can explore hybrid extractive-abstractive methods, enhanced attention
+for long inputs, and lightweight architectures to further improve accuracy and efficiency
+for real world financial summarization tasks.
+References
+1. Wafaa S El-Kassas, Cherif R Salama, Ahmed A Rafea, and Hoda K Mohamed. Automatic
+text summarization: A comprehensive survey. Expert systems with applications, 165:113679,
+2021.
+2. Ce Zhou, Qian Li, Chen Li, Jun Yu, Yixin Liu, Guangjing Wang, Kai Zhang, Cheng Ji, Qiben
+Yan, Lifang He, et al. A comprehensive survey on pretrained foundation models: A history
+from bert to chatgpt. arXiv preprint arXiv:2302.09419, 2023.
+
+Rehman et al.
+11
+3. Rajdeep Mukherjee, Abhinav Bohra, Akash Banerjee, Soumya Sharma, Manjunath Hegde,
+Afreen Shaikh, Shivani Shrivastava, Koustuv Dasgupta, Niloy Ganguly, Saptarshi Ghosh,
+and Pawan Goyal. ECTSum: A new benchmark dataset for bullet point summarization of
+long earnings call transcripts. In Yoav Goldberg, Zornitsa Kozareva, and Yue Zhang, editors,
+EMNLP 2022, pages 10893–10906, Abu Dhabi, United Arab Emirates, December 2022.
+Association for Computational Linguistics.
+4. Iz Beltagy, Matthew E Peters, and Arman Cohan. Longformer: The long-document transformer. arXiv preprint arXiv:2004.05150, 2020.
+5. Chin-Yew Lin. ROUGE: A package for automatic evaluation of summaries. In Text Summarization Branches Out, pages 74–81, Barcelona, Spain, July 2004. Association for Computational Linguistics.
+6. Satanjeev Banerjee and Alon Lavie. METEOR: An automatic metric for MT evaluation
+with improved correlation with human judgments. In Proceedings of the ACL Workshop on
+Intrinsic and Extrinsic Evaluation Measures for Machine Translation and/or Summarization,
+pages 65–72, 2005.
+7. Wei Zhao, Maxime Peyrard, Fei Liu, Yang Gao, Christian M. Meyer, and Steffen Eger.
+MoverScore: Text generation evaluating with contextualized embeddings and earth mover
+distance. In Kentaro Inui, Jing Jiang, Vincent Ng, and Xiaojun Wan, editors, Proc. EMNLPIJCNLP 2019, pages 563–578, Hong Kong, China, November 2019. ACL.
+8. Tianyi Zhang, Varsha Kishore, Felix Wu, Kilian Q Weinberger, and Yoav Artzi. BERTScore:
+Evaluating text generation with BERT. In 8th International Conference on Learning Representations, (ICLR 2020), pages 1–43, 2020.
+9. Iz Beltagy, Kyle Lo, and Arman Cohan. SciBERT: A pretrained language model for scientific
+text. In Kentaro Inui, Jing Jiang, Vincent Ng, and Xiaojun Wan, editors, Proceedings of
+the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th
+International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages
+3615–3620, Hong Kong, China, November 2019. Association for Computational Linguistics.
+10. Dogu Araci. Finbert: Financial sentiment analysis with pre-trained language models. arXiv
+preprint arXiv:1908.10063, 2019.
+11. Feng Nan, Ramesh Nallapati, Zhiguo Wang, Cicero Nogueira dos Santos, Henghui Zhu,
+Dejiao Zhang, Kathleen McKeown, and Bing Xiang. Entity-level factual consistency of
+abstractive text summarization. In Paola Merlo, Jorg Tiedemann, and Reut Tsarfaty, editors,
+Proc. of the 16th EACL: Main Volume, pages 2727–2733, Online, April 2021. ACL.
+12. Paulo Cesar Fernandes de Oliveira, Khurshid Ahmad, and Lee Gillam. A financial news
+summarization system based on lexical cohesion. In Proc. Int. Conf. on Terminology and
+Knowledge Engineering (TKE), Nancy, France, 2002.
+13. Christopher C Yang and Fu Lee Wang. Automatic summarization for financial news delivery
+on mobile devices. In WWW (Posters), 2003.
+14. Katja Filippova, Mihai Surdeanu, Massimiliano Ciaramita, and Hugo Zaragoza. Companyoriented extractive summarization of financial news. In Proc. 12th Conf. of the European
+Chapter of ACL (EACL 2009), pages 246–254, 2009.
+15. Yong Zhang, Erdan Chen, and Weidong Xiao. Extractive-abstractive summarization with
+pointer and coverage mechanism. In Proceedings of the 1st International Conference on Big
+Data Technologies, pages 69–74, 2018.
+16. Dang Trung Anh and Nguyen Thi Thu Trang. Abstractive text summarization using pointergenerator networks with pre-trained word embedding. In Proc. 10th Int. Symp. on ICT, pages
+473–478. ACM, 2019.
+17. Tohida Rehman, Debarshi Kumar Sanyal, and Samiran Chattopadhyay. Research highlight
+generation with elmo contextual embeddings. Scalable Computing: Practice and Experience,
+24(2):181–190, 2023.
+
+12
+Rehman et al.
+18. Tohida Rehman, Debarshi Kumar Sanyal, Samiran Chattopadhyay, Plaban Kumar Bhowmick,
+and Partha Pratim Das. Generation of highlights from research papers using pointer-generator
+networks and scibert embeddings. IEEE Access, 11:91358–91374, 2023.
+19. Tatiana Passali, Alexios Gidiotis, Efstathios Chatzikyriakidis, and Grigorios Tsoumakas.
+Towards human-centered summarization: A case study on financial news. In Proceedings
+of the First Workshop on Bridging Human–Computer Interaction and Natural Language
+Processing, pages 21–27, 2021.
+20. Yash Agrawal, Vivek Anand, S Arunachalam, and Vasudeva Varma. Hierarchical model for
+goal guided summarization of annual financial reports. In Companion Proceedings of the
+Web Conference 2021, pages 247–254, 2021.
+21. Mahmoud El-Haj and Andrew Ogden. Financial narrative summarisation using a hybrid tf-idf
+and clustering summariser: Ao-lancs system at fns 2022. In Proc. 4th Financial Narrative
+Processing Workshop, LREC 2022, pages 79–82, 2022.
+22. Moreno La Quatra and Luca Cagliero. End-to-end training for financial report summarization.
+In Proc. of the 1st Joint FinNLP & MultiLing Financial Summarisation Workshop, pages 118–
+123, 2020.
+23. Neelesh Shukla, Amit Vaid, Raghu Katikeri, Sangeeth Keeriyadath, and Msp Raja. Dimsum:
+Distributed and multilingual summarization of financial narratives. In Proc. of the 4th FinNLP
+Workshop, LREC 2022, pages 65–72, 2022.
+24. Mikhail Orzhenovskii. T5-long-extract at fns-2021 shared task. In Proceedings of the 3rd
+financial narrative processing workshop, pages 67–69, 2021.
+25. Natalia Vanetik, Marina Litvak, and Sophie Krimberg. Summarization of financial reports
+with tiber. Machine Learning with Applications, 9:100324, 2022.
+26. Qianqian Xie, Weiguang Han, Zhengyu Chen, Ruoyu Xiang, Xiao Zhang, Yueru He, Mengxi
+Xiao, Dong Li, Yongfu Dai, Duanyu Feng, et al. Finben: A holistic financial benchmark
+for large language models. Advances in Neural Information Processing Systems, 37:95716–
+95743, 2024.
+27. Eddy Cardinaels, Stephan Hollander, and Brian J White. Automatic summaries of earnings
+releases: Attributes and effects on investors’ judgments. Available at SSRN 2904384, 2018.
+28. Yong-En Tian, Yu-Chien Tang, Kuang-Da Wang, An-Zi Yen, and Wen-Chih Peng. Templatebased financial report generation in agentic and decomposed information retrieval. In Proceedings of the 48th International ACM SIGIR Conference on Research and Development in
+Information Retrieval, pages 2706–2710, 2025.
+29. Yanlong Huang, Wenxin Tai, Fan Zhou, Qiang Gao, and Ting Zhong. Extracting key insights
+from earnings call transcript via information-theoretic contrastive learning.
+Information
+Processing & Management, 62(3):103998, 2025.
+30. Chung-Chi Chen and Hiroya Takamura. Term-driven forward-looking claim synthesis in
+earnings calls. In Proc. of LREC-COLING 2024, pages 15752–15760, 2024.
+31. Mike Lewis, Yinhan Liu, Naman Goyal, Marjan Ghazvininejad, Abdelrahman Mohamed,
+Omer Levy, Veselin Stoyanov, and Luke Zettlemoyer.
+BART: Denoising sequence-tosequence pre-training for natural language generation, translation, and comprehension. In
+Dan Jurafsky, Joyce Chai, Natalie Schluter, and Joel Tetreault, editors, Proceedings of the
+58th Annual Meeting of the Association for Computational Linguistics, pages 7871–7880,
+Online, July 2020. Association for Computational Linguistics.
+32. Jingqing Zhang, Yao Zhao, Mohammad Saleh, and Peter J. Liu. Pegasus: pre-training with extracted gap-sentences for abstractive summarization. In Proceedings of the 37th International
+Conference on Machine Learning, ICML’20. JMLR.org, 2020.
+33. Wojciech Kryscinski, Bryan McCann, Caiming Xiong, and Richard Socher. Evaluating the
+factual consistency of abstractive text summarization. In Bonnie Webber, Trevor Cohn, Yulan
+He, and Yang Liu, editors, Proc. EMNLP 2020, pages 9332–9346, Online, November 2020.
+Association for Computational Linguistics.

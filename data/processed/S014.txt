@@ -1,0 +1,4971 @@
+Olmix: A Framework for Data Mixing
+Throughout LM Development
+Mayee F. Chen1,2
+Tyler Murray1
+David Heineman1
+Matt Jordan1
+Hannaneh Hajishirzi1,3
+Christopher Ré2
+Luca Soldaini1
+Kyle Lo1,3
+1Allen Institute for AI
+2Stanford University
+3University of Washington
+Code: Olmix
+Data: Olmix
+Contact: mfchen@cs.stanford.edu
+{lucas,kylel}@allenai.org
+Abstract
+Data mixing—determining the ratios of data from different domains—is a first-order concern for
+training language models (LMs). While existing mixing methods show promise, they fall short when
+applied during real-world LM development. We present Olmix, a framework that addresses two such
+challenges. First, the configuration space for developing a mixing method is not well understood—
+design choices across existing methods lack justification or consensus and overlook practical issues
+like data constraints. We conduct a comprehensive empirical study of this space, identifying which
+design choices lead to a strong mixing method. Second, in practice, the domain set evolves throughout
+LM development as datasets are added, removed, partitioned, and revised—a problem setting largely
+unaddressed by existing works, which assume fixed domains. We study how to efficiently recompute
+the mixture after the domain set is updated, leveraging information from past mixtures. We introduce
+mixture reuse, a mechanism that reuses existing ratios and recomputes ratios only for domains affected
+by the update. Over a sequence of five domain-set updates mirroring real-world LM development,
+mixture reuse matches the performance of fully recomputing the mix after each update with 74% less
+compute and improves over training without mixing by 11.6% on downstream tasks.
+1
+Introduction
+Figure 1 Two problems with data mixing encountered during LM development: (1) How to best configure your mixing
+method? (2) How to efficiently mix under evolving domain sets?
+Modern language models (LMs) are trained on datasets composed of many domains, such as web text, code,
+and PDFs. The composition of these domains is crucial for strong downstream performance, making data
+mixing a first-order component of LM development (Grattafiori et al., 2024; Qwen et al., 2024; Olmo et al.,
+2025). However, finding a good mix is non-trivial: practitioners often resort to manual weight tuning or
+exhaustive search, which can require many training runs—possibly thousands of GPU hours—to assess
+performance. This has resulted in a growing literature on data mixing methods that aim to find strong
+mixtures systematically with less compute (Xie et al., 2023; Fan et al., 2024; Chen et al., 2025a). Many mixing
+methods that achieve promising results follow a common offline mixing schema (Liu et al., 2025b,a; Ye et al.,
+2025) that consists of three steps: 1. train a set of smaller proxy models on different mixtures (a “swarm”), 2.
+1
+arXiv:2602.12237v1 [cs.LG] 12 Feb 2026
+
+fit a regression model on this swarm to predict performance from mixture weights, and 3. propose a final mix
+that optimizes predicted performance.
+However, data mixing remains far from solved: translating these methods to real-world LM development
+surfaces challenges that the existing literature does not address. In this work, we present Olmix, a mixing
+framework developed for pre-training Olmo 3 (Olmo et al., 2025), a family of fully open, state-of-the-art
+language and reasoning models at the 7B and 32B parameter scales. We identify two challenges in applying
+data mixing methods both at the start of LM development— configuring a mixing method on an initial
+domain set—and throughout development—recomputing mixtures efficiently as domains evolve (Figure 1).
+Olmix makes progress on addressing both.
+P1: The mixing configuration problem (§3). At the start of LM development, we must configure a mixing
+method on an initial set of domains. However, the configuration space of existing methods is poorly understood;
+design choices are often unjustified, contradict across methods, or fail to address practical issues like data
+constraints (Table 1). As a result, practitioners have conflicting or little guidance on which choices lead to a
+strong mixing method.
+The first component of Olmix addresses P1 through a comprehensive study of the configuration space of
+the offline mixing schema. We identify seven key design choices needed to instantiate a mixing method from
+the schema, and we empirically study each design choice in the context of pre-training Olmo 3. Below, we
+highlight several of these design choices and our findings:
+1. What is the minimum number of proxy runs (swarm size) needed to learn an effective mix for a given domain
+set? We find that the required number of runs scales linearly with the number of domains (Figure 4).
+2. Is there an optimal family of regression models for predicting mix performance? We find that different
+regression model families excel at different swarm sizes—a key confounding factor that explains disagreement
+in prior work—but that the log-linear model adapted from Ye et al. (2025) achieves the best overall
+downstream performance (Figure 6).
+3. How can we perform data mixing under finite data constraints? Existing methods assume unlimited data,
+but in practice, certain mixes require sampling more data than is available, leading to excessive sample
+repetition that degrades performance (Muennighoff et al., 2025). We show that incorporating constraints
+into the mixture optimization problem controls sample repetition while maintaining performance, and that
+these constraints significantly shape the proposed mix (Figure 7).
+These findings inform our base mixing method, OlmixBase (Algorithm 1), which we use throughout Olmo 3
+development and as a building block for addressing P2.
+P2: The evolving domain problem (§4). Existing mixing literature assumes a fixed domain set (Albalak et al.,
+2024), but real-world LM development is iterative. In our experience building Olmo 1–3 (Olmo et al., 2025),
+we repeatedly added, removed, revised, and partitioned datasets—a pattern also observed in other iterative
+development efforts, such as SmolLM 1–3 (Bakouch et al., 2025). As a result, mixtures must repeatedly be
+recomputed in practice as the domain set evolves over time. However, recomputing from scratch (e.g., using
+OlmixBase) after each domain update becomes increasingly expensive as practitioners make more updates
+to their datasets. Instead, we propose to leverage information from historical mixtures, motivating a new
+problem: given an existing mix, how do we efficiently recompute the mix to maintain strong performance after
+a domain update?
+The second component of Olmix addresses P2 by introducing a spectrum of recomputation strategies that
+trade off compute cost against performance. At one end is full recomputation—mixing from scratch after each
+domain update—which achieves high performance but incurs high computational cost. We make the following
+contributions developing mixture reuse alternatives along this performance-cost spectrum (Figure 9):
+1. We propose FullMixtureReuse, a mechanism that reuses the existing mix over the domains that are
+unaffected by the update. In particular, this mechanism freezes the relative weights among the unaffected
+domains and recomputes only their total weight alongside the weights of the affected domains. This restricts
+recomputation (via OlmixBase) to a lower-dimensional subspace, reducing computational cost.
+2. We analyze when FullMixtureReuse performs as well as full recomputation. The performance gap is
+2
+
+governed by how much the optimal ratios change after the update and the coupling between reused and
+recomputed domains, measured by how much they impact the same downstream tasks. When both effects
+are small, FullMixtureReuse roughly matches full recomputation while being less costly.
+3. We propose PartialMixtureReuse, an extension of FullMixtureReuse that provides a middle ground
+between full reuse and full recomputation which selectively recomputes the mix on some unaffected domains
+in addition to the affected ones. This approach can reduce coupling effects and narrow the performance
+gap to full recomputation at a slightly higher cost than FullMixtureReuse.
+Empirically, we evaluate Olmix—combining our configuration from P1 (OlmixBase) with our reuse mechanisms from P2 (FullMixtureReuse and PartialMixtureReuse)—in a real-world LM development
+setting where the domain set evolves through 5 updates culminating in 64 domains. When training 1B
+parameter models on 100B tokens, FullMixtureReuse improves over the natural distribution (a baseline
+with ratios proportional to domain sizes) by +11.6% and captures 95% of full recomputation’s gains while
+requiring 74% fewer proxy runs. PartialMixtureReuse reaches 98% (+12.0% improvement) while using
+67% fewer proxy runs. In addition, our best mix obtained via mixture reuse is 3.05× more data-efficient than
+the natural distribution, reaching the same final performance in one-third as many training steps.
+2
+Related Work
+Mixing Methods. The offline mixing schema, also described as “function fitting-based offline methods” in Liu
+et al. (2025b) has been extensively used in existing mixing methods. In Table 1, we provide an overview
+of several offline mixing methods and how they address the key design choices we study. Some methods
+use explicit parametric regression models (Que et al., 2024), while others use nonparametric approaches like
+LightGBM and Gaussian Processes (Liu et al., 2025a; Chen et al., 2025b). Some methods explicitly model
+the role of proxy model size or training budget (Ge et al., 2025b; Ye et al., 2025; Kang et al., 2025) while
+others assume direct generalization from proxy models to target models (Held et al., 2025). There are also
+several methods that build on top of RegMix (Liu et al., 2025a), exploring how it can be augmented with
+better domains (Wettig et al., 2025), iterative swarms (Diao et al., 2025), or more features (Belenki et al.,
+2025). Our work examines key design choices for the offline schema that underlies all these methods.
+Aside from the offline schema, DoReMi (Xie et al., 2023) and DoGE (Fan et al., 2024) determine a mixture
+by using one or two proxy runs that dynamically explore the mixture weight space; this is in contrast to
+using many proxy runs with static mixes. While these approaches have proven effective in some settings,
+previous analysis (Chen et al., 2025a) has suggested some suboptimality in how the dynamic update rules are
+constructed, and the offline schema is generally considered simpler to implement.
+Online mixing methods (Chen et al., 2023; Jiang et al., 2024; Albalak et al., 2023) adjust the mixture weights
+throughout the final training run. Rather than exploring the mixture space and learning from it offline, these
+methods do this on the fly during training. Note that our notion of dynamics, which is over the domain set
+and during LM development (i.e., before the final training run), is different from the dynamic aspect of online
+mixing methods.
+Existing mixture literature largely assumes fixed domain sets. The recent work Chameleon (Xie et al., 2025)
+addresses adaptability to domain changes by computing domain weights from learned embeddings using kernel
+ridge leverage scores, which allows direct transfer to new data without proxy retraining. Chameleon focuses
+on adding new domains and computes weights directly from domain embeddings without the swarm-based
+regression approach of offline methods. In contrast, our mixture reuse approach explicitly handles various
+domain update operators (add, remove, partition, and revise) and is designed to work with any method that
+follows the offline mixing schema. Moreover, our approach provides a theoretical and empirical analysis of
+when and why existing mixes can be reused.
+Data-constrained settings. Several works have studied how to train language models under data constraints.
+UniMax (Chung et al., 2023) proposes an allocation algorithm for multilingual pretraining that distributes
+a fixed token budget to maximize uniform coverage across languages while capping repetitions to avoid
+overfitting on low-resource languages. Muennighoff et al. (2025) find that up to 4 epochs of repetition yields
+negligible degradation and propose modified scaling laws that account for diminishing returns of repeated
+3
+
+tokens. Our work explicitly integrates repetition constraints directly into data mixing, enabling principled
+allocation of limited data budgets while producing a mix that yields strong downstream performance.
+LM Data Development. Real-world LM development involves iterative refinement of training data. Works
+like DCLM (Li et al., 2024), Dolma (Soldaini et al., 2024), and FineWeb (Penedo et al., 2024) extensively
+document the curation processes involved in creating high-quality pretraining corpora, including quality
+filtering, deduplication strategies, and careful domain selection. Continuous projects like OLMo 1-3 (Groeneveld
+et al., 2024; OLMo et al., 2024; Olmo et al., 2025) and SmolLM 1-3 (Allal et al., 2024, 2025; Bakouch et al.,
+2025) showcase how training data evolves over time. Motivated by these works, Olmix views data mixing as
+an ongoing process throughout LM development.
+3
+The Mixing Configuration Problem
+We present the first component of Olmix: a comprehensive empirical study of the configuration space of
+mixing methods. We begin by formalizing the data mixing problem and describing the offline mixing schema
+(§3.1). Then, we enumerate the key design choices that must be made to configure an offline mixing method
+(§3.2). Our main contribution is an empirical study of these design choices in §3.3. These findings inform
+OlmixBase (§3.4), the mixing method we used throughout Olmo 3 development.
+3.1
+Background
+3.1.1
+The Data Mixing Problem
+Our goal is to determine ratios over training data domains that result in strong downstream performance.
+Domain set and mixes. Let D = {D1, D2, . . . , Dm} be a set of m domains, where each domain Di has a
+training dataset of size Ni tokens. A domain is a group of data, ranging from coarse-grained sources (defined
+by data provenance) to fine-grained topics (semantically coherent partitions of a source) (Wettig et al., 2025).
+We specify a data mixture via a probability vector p ∈△m−1, such that training on R total tokens uses a
+dataset with pi ⋅R tokens from Di for each domain i.
+Model and evaluation. We train a target LM of S parameters for R tokens on p, denoted as LM(S, R, p). We
+then evaluate this model on a suite of n downstream tasks. We measure the performance fi(LM(S, R, p)) on
+each task i in terms of bits-per-byte (BPB), the negative log likelihood of the correct answer normalized by
+answer length in UTF-8 bytes. Heineman et al. (2025) showed that BPB can be used for decision-making at
+small model scales and Huang et al. (2024) showed that BPB sets correlate with downstream performance
+across capabilities and model families.
+Goal.
+Given a domain set D and target model configuration of S parameters and R tokens, we aim
+to find a mixture p⋆that minimizes the average BPB across all downstream tasks—that is, minimizing
+1
+n ∑n
+i=1 fi(LM(S, R, p)).
+3.1.2
+The Offline Mixing Schema
+Many existing methods follow an offline mixing schema to propose a mix; these methods are also described
+as “function fitting-based offline methods” in Liu et al. (2025b)’s survey. We describe the three steps of this
+schema below and present them in Figure 2 as well.
+Step 1: Swarm construction. We sample the space of possible mixes by training a “swarm” of K small
+proxy models of size Ssmall on Rsmall tokens, each with different mixture weights p1, p2, . . . , pK ∈△m−1
+sampled from some distribution P. We evaluate each proxy model on the downstream task suite to obtain
+yij ∶= fi(LM(Ssmall, Rsmall, pj)), the performance of the jth proxy model on the ith task, for all tasks over
+the entire swarm. Altogether, this creates a dataset {(pj, {yij}n
+i=1)}K
+j=1 of mixture weights paired with their
+performance across all tasks.
+Step 2: Regression model. We fit regression models using the above dataset to capture the relationship
+between the mixture weights and downstream performance. We learn a function ˆ
+f ∈F, where ˆ
+f(p) ≈
+4
+
+Figure 2 The offline mixing schema used by many existing methods (§3.1.2). We study the design choices needed to
+configure the schema to develop a strong mixing method (§3.2-§3.3).
+1
+n ∑n
+i=1 fi(LM(Ssmall, Rsmall, p)). This enables us to predict the average downstream BPB of a proxy model
+trained on any candidate mix p.
+Step 3: Mixture optimization. We propose a mix by solving an optimization problem that uses the regression
+model ˆ
+f as a surrogate for true performance. This optimization problem takes the form minimize
+p∈S
+ˆ
+f(p), where
+S ⊆△m denotes the feasible set, which may be the full probability simplex or a restricted subset.
+3.2
+Olmix Design Choices
+Key design choices of the offline mixing schema are not explicitly identified in existing literature. We articulate
+these design choices as a configuration checklist of research questions (RQs) that practitioners must consider
+when developing their own mixing methods.
+Swarm construction:
+RQ1 What is the smallest proxy model size (the number of parameters, Ssmall) such that decision-making
+generalizes to larger target models?
+RQ2 How many proxy runs K do we need to learn a good mix on m domains?
+RQ3 How should we specify the distribution P to sample the mixes for the proxy runs?
+Regression model:
+RQ4 Is there an optimal family of regression models (F) for predicting mix performance?
+RQ5 At what granularity should we fit the regression models in order to construct ˆ
+f(p)?
+Mix optimization:
+RQ6 How do we mix under finite data constraints?
+RQ7 How do we solve the optimization problem?
+Table 1 shows how several existing methods address these design choices we identify. Shaded cells indicate
+design choices with reported justification while white cells represent those that lack sufficient explanation or
+exploration of alternatives. There are three takeaways:
+• Many design choices lack guidance beyond the specific instantiation; for instance, decisions on the swarm
+size and distribution are rarely explained.
+• Even design choices that have justification lack consensus. For example, each existing method proposes a
+different regression model and reports strong regression fit to support it.
+• Critical aspects of LM development remain unaddressed, such as mixing under data constraints.
+These gaps motivate a systematic investigation of the design choices within the offline mixing schema.
+5
+
+Table 1 Design choices across offline mixing methods. For each design choice and mixing method, we identify the
+method’s configuration. We shade cells in pink if we found empirical justification for their configuration. In the final
+column, we present the configuration for OlmixBase.
+Design
+Choice
+RegMix (Liu
+et al., 2025a)
+DML (Ye
+et al., 2025)
+AutoScale (Kang
+et al., 2025)
+BiMix (Ge
+et al., 2025b)
+ADMIREBayesOpt
+(Chen et al.,
+2025b)
+CLIMB (Diao
+et al., 2025)
+OlmixBase
+(Algorithm 1)
+Swarm Construction
+Proxy model
+size
+1M
+70, 160, 305,
+410M
+Target
+280M
+1M, 60M
+350M
+30M
+Swarm size (vs
+m domains)
+512 (m = 17)
+20 (m = 7)
+2m + 1
+4
+101 (m = 17)
+112 (m = 21)
+3(m + 1)
+Swarm
+distribution
+Dirichlet with
+natural prior
+Exponential
+grid
+Exponential
+grid
+Entropyweighted
+Dynamic
+Dirichlet with
+natural prior
+Dirichlet with
+natural prior
+(sparse for
+topics, dense
+for sources)
+Regression Model
+Regression
+model family
+LightGBM
+Log-Linear
+Power Law
+Power Law
+Gaussian
+Process
+LightGBM
+Log-Linear
+Regression
+granularity
+Aggregated
+Aggregated
+Per-Task
+Per-Task
+Aggregated
+Aggregated
+Per-Task
+Mixture Optimization
+Data repetition
+constraints
+No
+No
+No
+No
+No
+No
+Yes
+Optimization
+solver
+Search
+Search
+Gradient
+Descent
+Exact Solver
+Search
+Search
+Exact Solver
+with KL reg.
+3.3
+Olmix Study: Configuring a Mixing Method
+We conduct a comprehensive study of each design choice. We describe our experimental setup (§ 3.3.1) and
+then investigate the design choices pertaining to each component of the offline mixing schema (§ 3.3.2-3.3.4).
+3.3.1
+Experimental Setup
+Data. We use DCLM (Li et al., 2024) partitioned into 24 topic-based domains using WebOrganizer (Wettig
+et al., 2025). See Table 8 for domain names and token counts. In Appendix A, we also provide results for
+mixing over the final data sources of Table 5.
+Model. We train 1B parameter decoder-only transformer models using Olmo 2 architecture (OLMo et al.,
+2024) to 100B tokens (5x Chinchilla). We use a batch size of 512, sequence length of 4096, and max learning
+rate of 0.0018. See Appendix D.1 for more details.
+Evaluation. We measure BPB (bits-per-byte) over gold responses on 52 downstream tasks spanning math,
+code, and commonsense QA. For QA tasks, the gold continuation is the answer text; for math and code tasks
+it is a human-written response. We treat subtasks (e.g. MMLU or coding language subsets) as standalone
+tasks when taking an macro-average of BPB scores. See Table 9 for the entire list of tasks.
+Unless otherwise specified, all experiments use DCLM topics as the set of domains and OlmixBase (§ 3.4,
+Algorithm 1) as the default configuration, varying only the component under study. Appendix A provides full
+experiment details.
+3.3.2
+Swarm Construction Study
+RQ1: Proxy model size. Proxy models must provide reliable signal that transfers to the target model’s scale
+while ideally being small so that computational costs are low. Existing methods use sizes ranging from 1M to
+400M parameters, making it unclear what size is sufficient.
+We train many proxy–target model pairs, where each pair consists of a proxy model and a 1B target model
+6
+
+0
+10
+20
+30
+40
+50
+60
+Proxy model parameters (millions)
+72.5
+75.0
+77.5
+80.0
+82.5
+85.0
+87.5
+90.0
+92.5
+Rank Correlation with 1B Model
+1M
+15M
+30M
+60M
+Figure 3 Correlation in performances between pairs of proxy models and 1B target models trained on the same
+mixture. Proxy models with over 15M parameters achieve strong rank correlation.
+trained on the same mixture ratios. We compute the Spearman rank correlation between proxy and target
+model performance (average BPB) to quantify transfer; a high correlation indicates that rankings at the proxy
+scale predict rankings at the target scale, ensuring reliability of proxy swarm decisions. We consider proxy
+models of 1M, 15M, 30M, and 60M parameters with 5x Chinchilla multiplier.
+Figure 3 shows that proxy models with ≥15M parameters achieve strong rank correlation (ρ > 89). However,
+1M models show significantly degraded correlation (r = 73), making them unreliable for guiding mixture
+decisions. This is in contrast to the recommendation of RegMix (Liu et al., 2025a)1. For our setting, we use
+30M parameter proxy models with 3B tokens (5x Chinchilla), which achieves a Spearman correlation of 89.6
+with 1B target models.
+RQ2: Swarm size in terms of number of domains. The swarm size directly controls the cost-performance
+tradeoff: more proxy runs increase computational cost but improve mix quality. However, it is unclear what
+the tradeoff rate is when mixing over m domains, since existing methods use fixed swarm sizes ranging from
+20 to over 500, and few relate these choices to the number of domains m.
+We examine the sample complexity of the log-linear regression model, which we evaluate against other
+regression models in RQ4 and use in OlmixBase.
+Specifically, given a set of m domains, the sample
+complexity measures how many proxy runs K are needed to produce a mix whose downstream BPB is within
+a certain margin of the best mix we’ve identified. For a fixed number of domains m, we run a sweep over
+swarm sizes K = c(m + 1) for linear multiplier c = 1, 2, 3, 4, 5 (since the minimum number of runs needed for
+a unique solution to log-linear regression is m + 1). We perform this sweep for m = 6, 12, 18, 24 domains and 3
+seeds. For each m, we define error as the difference between the BPB of a proposed mix and the best BPB
+achieved achieved by any mix found in the corresponding sweep for that m. We used 30M proxy models for
+all runs here but verify that the proposed mixes from these different swarm sizes also exhibit the same trends
+at the 1B scale (Figure 18).
+Figure 4 shows that sample complexity is linear in m: the error curves across m collapse when plotted against
+the linear multiplier c. This means that for any target error, there exists a fixed c that achieves it, regardless of
+m. Therefore, O(m) runs are sufficient for strong performance—a finding that contradicts prior assumptions
+of quadratic scaling (Ye et al., 2025; Ge et al., 2025b) and provides practitioners with a concrete prescription
+for allocating compute. We recommend using at least K ≥3(m + 1) proxy runs with the log-linear regression
+model, since c = 3, 4, 5 all have close to 0 error.
+RQ3: Swarm distribution. We study the distribution P from which swarm mixtures should be sampled. The
+distribution determines how effectively the swarm explores the mixture space. However, existing works rarely
+1Investigating the public RegMix code, we found their 1M implementation is closer to 15M, which our results suggest is a
+good proxy size.
+7
+
+m + 1
+2(m + 1)
+3(m + 1)
+4(m + 1)
+5(m + 1)
+Swarm Size
+0.02
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+0.12
+ Error (BPB - min BPB per m)
+Number of domains
+m=6
+m=12
+m=18
+m=24
+Figure 4 Error vs. Swarm Size. Curves collapse across different m, indicating O(m) runs are needed. Results are
+averaged across 3 random seeds, and the intervals indicate min and max results.
+Table 2 Natural and strong priors achieve similar downstream performance, but the weak prior does considerably
+worse, suggesting that this design choice is fairly robust and that the natural distribution is a reasonable configuration.
+Dirichlet Prior
+Avg Downstream Task BPB ↓
+Regression Fit ↑
+Natural
+0.765
+0.748
+Strong
+0.763
+0.835
+Weak
+0.797
+0.661
+study the impact of the swarm distribution, with only CLIMB (Diao et al., 2025) comparing a Dirichlet versus
+a random uniform distribution.
+We investigate two aspects of the swarm distribution. To evaluate each aspect, we measure the average BPB
+of 1B target models trained on proposed mixes. As an intermediate metric, we also report the regression fit
+(Pearson correlation between predicted and true per-task BPB) on a held-out set of mixtures.
+• Should each proxy run train on data from all domains (dense), or should some runs focus on subsets of
+domains (sparse)? Sparse distributions enable discovering that certain domains should be excluded, while
+dense distributions ensure all domains are represented in all proxy runs. We generate sparse and dense
+swarms at the topic level (on DCLM topics) and source level (on the final sources from Table 5) to capture
+both fine and coarse-grained domains.
+• Does centering the swarm around a promising mixture region improve results? We test three Dirichlet
+priors: 1) the natural distribution (based on domain token counts), 2) a strong prior, and 3) a weak prior
+(see Appendix A.3 for exact constructions).
+Figure 5 shows that sparse swarms outperform dense at the topic level and vice versa at the source level—both
+for downstream BPB (left) and regression fit (right). Neither is universally better; the choice depends on the
+domain set. One hypothesis is that the best topic-level mixes exclude certain low-signal topics (e.g., adult
+content in DCLM), while the best source-level mixes utilize all sources. This aligns with how these domains
+were constructed: DCLM was partitioned into topics that are potentially uninformative, while sources are
+intentionally curated. The choice of swarm distribution depends on the domain set; we recommend using
+sparse distributions for topic-level mixing and dense distributions for source-level mixing.
+Table 2 shows that centering on the natural distribution and the strong prior results in roughly similar
+downstream performance while using the weak prior significantly degrades performance. We recommend that
+practitioners center the swarm around strong priors when available, but if prior knowledge is uncertain, the
+natural distribution remains a reasonable fallback.
+8
+
+Topic Level
+Source Level
+0.600
+0.625
+0.650
+0.675
+0.700
+0.725
+0.750
+0.775
+0.800
+ Average Downstream Task BPB
+0.776
+0.661
+0.765
+0.669
+Swarm Distribution
+Dense
+Sparse
+Topic Level
+Source Level
+0.62
+0.64
+0.66
+0.68
+0.70
+0.72
+0.74
+0.76
+Regression Fit
+0.685
+0.742
+0.758
+0.735
+Swarm Distribution
+Dense
+Sparse
+Figure 5 Performance (left) and regression fit (right) of dense versus sparse swarms. While sparse swarms perform
+better at the topic level, dense swarms perform better at the source level, suggesting that behavior is data-dependent.
+3.3.3
+Regression Model Study
+RQ4: Regression model family. The regression model is crucial: mixes are optimized directly using its
+predictions, meaning that regression fit directly controls the quality of the proposed mix. However, each
+existing method proposes a different model and reports strong fit, making it unclear which to adopt.
+We compare several regression model families derived from existing methods (see Appendix A.4 for adaptations):
+• Search: selects the best mixture from the swarm.
+• LightGBM (Shi et al., 2025): a gradient boosting regression framework using decision trees. It has been
+used to learn the regression model in several mixing papers, including RegMix (Liu et al., 2025a; Wettig
+et al., 2025; Diao et al., 2025).
+• Gaussian Process: based on Chen et al. (2025b), we consider Gaussian Process regression with an RBF
+kernel scaled by a signal variance term and augmented with independent Gaussian observation noise.
+• BiMix (Ge et al., 2025b): we consider an adaptation of BiMix to our setting that has the following parametric
+form: ˆ
+fi(p) = ∑m
+j=1 Aijp
+−αij
+j
+, where Aij, αij ∈R+ for all i, j.
+• AutoScale (Kang et al., 2025): we consider an adaptation of Autoscale to our setting that has the following
+parametric form: ˆ
+fi(p) = ci + ∑m
+j=1(R(Aij + pj))−αij, where ci, αij ∈R+, Aij ∈[0, 1] and R is the number
+of requested tokens for all i, j.
+• Log-linear: we consider an adaptation of Data Mixing Laws (Ye et al., 2025) to our setting that has the
+following parametric form: ˆ
+fi(p) = ci + exp(A⊤
+i pi), where ci ∈R+ and Ai ∈Rm for all i. m + 1 proxy
+models must be trained to obtain a unique solution.
+First, we measure the regression fit, the Pearson correlation between predicted and true per-task BPB on
+held-out mixtures, across regression models and swarm sizes K = 25, 50, 75, 100, 118. We repeat this across 3
+random seeds, subsampling each swarm from a pool of 118 proxy runs (drawn from a larger swarm of K = 128
+with 10 held-out mixes).
+Figure 6 (left) shows that swarm size is a key confounding factor in regression fit: different models excel at
+different swarm sizes, potentially explaining the lack of consensus. For instance, BiMix (Ge et al., 2025b)
+performs the best for small swarms (K = 25), while LightGBM (Liu et al., 2025a) requires more than 118
+proxy runs for sufficient fit. Notably, log-linear models (Ye et al., 2025) achieve the best regression fit overall
+(ρ = 80 at K = 118) and outperforms other models consistently when K ≥75 (i.e. K ≥3(m + 1)).
+Next, we examine the downstream performance of these regression models when K = 128. Figure 6 (right) shows
+that the log-linear regression model’s proposed mix achieves the best downstream performance. Combined
+with the strong regression fit, we recommend using log-linear models, given swarm size K ≥3(m + 1), as
+9
+
+40
+60
+80
+100
+120
+Swarm Size
+0.0
+0.2
+0.4
+0.6
+0.8
+Regression Fit
+LightGBM
+Autoscale
+Gaussian Process
+BiMix
+Log-Linear
+Search
+Natural
+LightGBM
+Autoscale
+GP
+BiMix
+Log-Linear
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+ Average Downstream Task BPB
+1.002
+0.823
+0.813
+0.798
+0.792
+0.768
+0.765
+Figure 6 Left: Fit versus swarm size across regression models. Different models require different amounts of data, and
+the log-linear model achieves the best regression fit. Results are averaged across 3 random seeds, and the intervals
+indicate min and max results. Right: Downstream performance of regression models for K = 128. The log-linear model
+achieves the best average downstream task BPB.
+Table 3 Performance and regression fit across regression granularities. As granularity of the regression target increases,
+the regression fit improves, and the downstream performance also trends towards improvement.
+Method
+Avg Downstream Task BPB ↓
+Regression Fit ↑
+Per-Task
+0.765
+0.983
+Per-Family
+0.777
+0.958
+Aggregated
+0.774
+0.866
+recommended in RQ2.
+Appendix A.4 provides additional results at the source level (Figure 19) and how regression fit varies with
+swarm size and number of domains (Figure 20).
+RQ5:Regression granularity. We study the granularity at which to fit regression models in constructing ˆ
+f: one
+model per task, one model per task family (e.g., math, code, and QA), or one model for the entire average
+BPB. This involves a tradeoff between expressivity and noise. Per-task and per-family regression models can
+capture distinct relationships between mixtures and various capabilities, increasing expressivity of the overall
+function approximating average BPB, ˆ
+f. However, they are fit to noisier individual measurements, while
+directly modeling average BPB may involve less noisy targets.
+We compare three approaches. In the per-task approach, we fit individual functions ˆ
+fi(p) using {(pj, yij)}K
+j=1
+for each task i ∈[n], and then minimize
+1
+n ∑n
+i=1 ˆ
+fi(p). In the per-family approach, we group tasks into
+three families F1, F2, F3: math, code, and QA. We fit one model ¯
+fi(p) to each family’s average BPB using
+{(pj,
+1
+∣Fi∣∑k∈Fi ykj)}K
+j=1 for i = 1, 2, 3, and then minimize ∑3
+i=1
+∣Fi∣
+n ¯
+fi(p). In the aggregated approach, we fit
+a single function ˆ
+favg(p) directly to the average BPB across tasks using {(pj, 1
+n ∑n
+i=1 yij)}K
+j=1 and minimize
+ˆ
+favg(p). We evaluate downstream performance (average BPB of 1B target models) and regression fit (Pearson
+correlation on held-out mixtures).
+Table 3 shows that per-task yields the best downstream performance and regression fit. Regression fit degrades
+monotonically as granularity decreases, consistent with reduced expressivity. While per-family has better
+regression fit than aggregated, their downstream performance is comparable; this is likely due to noise in
+transferring from proxy to target models since the performance on 30M models (Figure 21) exhibits trends
+that are consistent with the regression fit. Nevertheless, per-task provides clear benefits on both metrics. We
+recommend fitting separate regression functions per task.
+10
+
+Table4 Performance and repetition constraint satisfaction. Using a constrained swarm with unconstrained optimization
+does not satisfy a repetition constraint with k = 4; the proposed mix repeats samples of a domain 5 times. Between
+approaches 2 and 3, the former approach achieves the best downstream performance.
+Approach
+Satisfies rep. constraint? (k = 4)
+Avg. Task BPB ↓
+1) Constrained Swarm, Unconstrained Opt
+No (5)
+0.774694
+2) Unconstrained Swarm, Constrained Opt
+Yes (4)
+0.764718
+3) Constrained Swarm, Constrained Opt
+Yes (4)
+0.785517
+3.3.4
+Mix Optimization Study
+RQ6: Data repetition constraints. In practice, LM training is often data-constrained: the target model’s
+requested training tokens R exceed the available data. In this regime, some mixtures cause excessive sample
+repetition, degrading performance (Muennighoff et al., 2025). For example, a mixture that proposes 40% code
+when code comprises only 5% of available data would oversample code 8 times. Existing mixing methods
+assume compute-constrained settings with effectively infinite data and provide no way to control repetition.
+We consider repetition constraints of the form pj ≤
+kNj
+R
+for all j ∈[m], where k is a repetition factor that
+limits how many times any domain can be sampled given R requested tokens and Nj available tokens in
+domain j. We study two questions around enforcing these constraints and their impact on proposed mixes.
+• How should repetition constraints be enforced while ensuring strong downstream performance? We consider
+two places where constraints can be enforced. First, we can constrain the swarm by ensuring that all swarm
+mixes satisfy the constraint—the regression models then learn what mixes are feasible. Second, we can
+constrain the optimization problem directly. This creates three approaches: 1) constrained swarm with
+unconstrained optimization, 2) unconstrained swarm with constrained optimization, and 3) constrained
+swarm with constrained optimization. We test with k = 4, verifying whether the proposed mixture satisfies
+the constraint and reporting downstream performance.
+• How does the repetition factor affect the proposed mix?
+Using the best-performing strategy, we vary
+k ∈{2, 3, 4, 5, ∞} and visualize how the proposed mix changes.
+Table 4 shows that approach 2 (unconstrained swarm, constrained optimization) results in a proposed mix that
+satisfies the repetition constraints while maintaining performance. Approach 1 fails to satisfy the constraints,
+repeating samples from one domain 5 times and exceeding k = 4. Approach 3 satisfies constraints but yields
+worse downstream performance than approach 2, likely because the constrained swarm provides less coverage
+of the mixture space. We recommend enforcing repetition constraints in the mixture optimization step.
+Figure 7 shows how the proposed mix changes with varying k when we add a repetition constraint to the
+optimization problem.. As the constraint relaxes from 2 to ∞(the infinite data setting), the mixture weights
+on high-utility domains, such as software development, monotonically increase. In contrast, domains such as
+literature smoothly decrease as k increases, suggesting that their larger allocations under tight constraints
+primarily compensate for limited availability of higher utility domains. This demonstrates that repetition
+constraints significantly shape the proposed mix.
+RQ7: Optimization solver. We study how to solve for the mixture that minimizes the average predicted BPB
+ˆ
+f(p). Under log-linear regression, ˆ
+f(p) is convex, enabling exact solvers. However, since regression functions
+imperfectly predict performance (Figure 6 left), it is unclear whether exact optimization of the surrogate
+objective yields the mix with the best downstream performance or if incorporating some regularization may
+be better.
+We consider three solving strategies. The exact solver uses CVXPY to compute the optimal mix. The searchbased solver, used in RegMix (Liu et al., 2025a), samples candidate mixes from a Dirichlet distribution with a
+natural prior (i.e., a mix proportional to the domain sizes). The exact solver with KL regularization modifies
+the objective to minimizep∈△m−1 ˆ
+f(p) + λDKL(p∣∣p0), where λ > 0 controls the strength of regularization
+towards the natural distribution p0; we consider λ ∈{0.01, 0.05}. We measure the average BPB of 1B target
+models trained on the proposed mixes. We also examine the optimal objective value, the predicted average
+11
+
+entertain. games
+health literature politics scimath
+tech
+software
+dev
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+Mixture Weight
+Repetition Factor
+k = 2.0
+k = 3.0
+k = 4.0
+k = 5.0
+k =
+Figure 7
+Proposed Mixture Weights versus Repetition Factor. Enforcing varying caps on repetition k leads to
+significantly different proposed mixes. See Figure 22 for mixture weights on the full set of domains.
+Exact
+Exact + KL (0.01)
+Exact + KL (0.05)
+Search
+0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+0.79
+0.80
+ Average Downstream Task BPB
+0.7772
+0.7806
+0.7647
+0.7938
+Exact
+Exact + KL (0.01)
+Exact + KL (0.05)
+Search
+1.710
+1.715
+1.720
+1.725
+1.730
+ Average Predicted 30M Task BPB
+1.7167
+1.7183
+1.7257
+1.7231
+Figure 8 Downstream performance (left) and 30M predicted performance (right) across optimization solvers. The
+predicted performances of various solvers confirms that the exact solver minimizes the predicted BPB, as expected,
+followed by KL penalties of 0.01 and 0.05. However, the exact solver does not obtain the best downstream performance,
+and instead some KL regularization helps.
+BPB at the 30M proxy model scale, as a sanity check that the exact solver should obtain the lowest predicted
+BPB.
+Figure 8 (left) shows that the exact solver with λ = 0.05 achieves the best performance. In contrast, the
+right panel confirms that the exact solver obtains the lowest predicted BPB, while adding a KL penalty
+degrades it. Taken together, these results indicate that although the average predicted BPB is optimized most
+effectively by the exact solver, noise from regression fitting and proxy-to-target model transfer makes moderate
+regularization beneficial. The search baseline achieves poor performance, consistent with it being a heuristic.
+We recommend using an exact solver with a KL regularization of 0.05 to solve the mixture optimization problem.
+See Appendix A.7, Figure 23 for additional source-level results.
+3.4
+Configuring OlmixBase
+Our results in §3.3 let us define OlmixBase, a concrete configuration of the offline mixing schema that we
+use throughout Olmo 3 development. The rightmost column of Table 1 summarizes the full configuration, and
+Algorithm 1 formalizes the procedure (blue highlights steps informed by our findings).
+12
+
+Algorithm 1 OlmixBase
+1: Input: Domains D = {D1, . . . , Dm} of sizes {N1, . . . , Nm}, swarm size K = O(m), repetition
+factor k, requested tokens R, KL penalty λ, natural distribution p0 ∝{N1, . . . , Nm}.
+2: Sample mixes p1, . . . , pK ∈△m−1 on D.
+3: Train proxy models Ssmall ≥15M parameters on these mixes, and evaluate on downstream tasks to get a dataset of mixes and performance, {(pj, {yij}n
+i=1}K
+j=1, where yij ∶=
+fi(LM(Ssmall, Rsmall, pj)).
+4: for i ∈[n] do
+5:
+Use {(pj, yij)}K
+j=1 to fit the log-linear model ˆ
+fi(p)=ci+exp(A⊤
+i p), where ci ∈R+ and Ai ∈Rm.
+6: end for
+7: Solve the optimization problem to get p⋆:
+minimizep∈△m−1 1
+n
+n
+∑
+i=1
+ˆ
+fi(p) + λDKL(p∣∣p0)
+subject to
+pj ≤
+kNj
+R
+∀j ∈[m]
+8: Return p⋆.
+Swarm
+Regression Optimization
+4
+The Evolving Domain Problem
+From §3, OlmixBase assumes a fixed domain set D. Here, we study the evolving domain problem encountered
+throughout LM development. We first formalize the problem of recomputing mixes after the domain set is
+updated (§4.1). We then present FullMixtureReuse, our primary mechanism that reuses ratios on all the
+domains unaffected by the update (§4.2). We theoretically analyze when FullMixtureReuse performs
+well (§4.3). Finally, we introduce PartialMixtureReuse as an extension that reuses the ratios over some
+unaffected domains (§4.4). An overview of these strategies is provided in Figure 9.
+4.1
+Problem Setup
+During LM development, the domain set evolves from D to an updated set D′ = {D′
+1, . . . , D′
+m′} of size m′,
+where each domain D′
+i now has N ′
+i tokens. We use q ∈△m′−1 to express data mixtures over D′. In practice,
+domain updates are typically localized, affecting only a subset of domains while leaving others unchanged.
+To capture this structure, we partition the domain sets as D = [D1, D2] and D′ = [D1, D′
+2], where D1 is the
+unaffected domain set, and D2 is the affected domain set that is transformed into D′
+2.
+In developing Olmo 1–3 (Olmo et al., 2025) and observing similar efforts like SmolLM 1–3 (Bakouch et al.,
+2025), we identified four patterns of domain updates, which we call domain update operators, that describe
+how D2 transforms into D′
+2 (Figure 1):
+• Add: D2 = ∅and D′
+2 contains the newly added domains. This occurs when new datasets are created.
+• Remove: D2 contains one or more domains and D′
+2 = ∅. This can occur, for instance, when domains are
+discarded due to low utility.
+• Partition: D2 consists of one domain that is split into multiple subdomains in D′
+2 such that D2 = ⋃D′
+i∈D′
+2 D′
+i.
+Partitioning is commonly used to obtain finer-grained mixtures, which can improve performance (Wettig
+et al., 2025; Diao et al., 2025; Ge et al., 2025a; Peng et al., 2025).
+• Revise: D2 is one domain that is modified to produce the corresponding domain in D′
+2. This occurs when
+contents of the dataset are modified, such as samples being reformatted or rewritten (Team et al., 2025;
+Maini et al., 2024).
+Goal. We have an existing mixture ˜
+p ∈△m−1 over the current domain set D proposed through a procedure
+like OlmixBase. But now, the domain set has evolved from D to D′, and our goal is to use ˜
+p to compute an
+13
+
+Figure 9 Overview of Mixture Recomputation Strategies. When the domain set is updated, full recomputation applies
+OlmixBase on the entire D′, while FullMixtureReuse (§4.2) and PartialMixtureReuse (§4.4) freeze the ratios
+of the domains in Dfix, resulting in less recomputation. The strategies provide a spectrum in terms of cost (number of
+swam runs) and downstream performance.
+updated optimal q⋆∈△m′−1 on D′ that solves
+minimizeq∈△m′−1 1
+n
+n
+∑
+i=1
+fi(LM(S, R, q))
+(1)
+s.t.
+qj ≤
+kN ′
+j
+R
+∀j ∈[m′]
+This objective is similar to the one in §3.1.1, except that it is defined over q, and we explicitly enforce the
+repetition constraint from §3.3.4 to ensure that samples are not repeated more than k times.
+Baseline: full recomputation. One way to solve (1) is to apply OlmixBase (Algorithm 1) to D′ after each
+update, which requires a swarm of O(m′) proxy runs (§3.3.2). The costs of full recomputation thus accumulate
+rapidly with the number of updates. We next study whether mixture reuse can produce mixes at a lower cost.
+4.2
+Mixture Reuse
+The core idea in mixture reuse is to freeze the relative ratios among the unaffected domains according to
+˜
+p, aggregate them into a single virtual domain, and only recompute its total weight along with the weights
+of the affected domains D′
+2. This reduces the dimensionality of the optimization from m′ to 1 + ∣D′
+2∣. This
+mechanism is presented in Figure 9 (right).
+For example, suppose D contains m = 3 domains with mixture ˜
+p = [0.25, 0.25, 0.5], and D′ is formed by
+adding one new domain. Instead of learning a 4-dimensional mixture, we learn a 2-dimensional mixture over
+the virtual domain and the new domain. If that mixture is [0.4, 0.6], we can expand it using ˜
+p to induce the
+final mixture over m′ = 4 domains:
+q =
+0.4
+ÍÒÑÏ
+recomputed
+virtual domain
+ratio
+⋅[0.25, 0.25, 0.5]
+ÍÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÑÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÒÏ
+reused
+ratios
+∪
+[0.6]
+ÍÒÒÒÒÒÒÒÒÑÒÒÒÒÒÒÒÒÏ
+recomputed
+affected domain
+ratio
+= [0.1, 0.1, 0.2, 0.6].
+See Appendix B.1 for examples of Remove, Partition, and Revise.
+4.2.1
+Formalizing the Mixture Reuse Problem
+The example above provides the intuition behind mixture reuse, which we formalize in the mixture reuse
+problem. First, we introduce notation to handle domains we will reuse versus recompute. Define Dfix ∶= D1
+as the unaffected domains whose relative ratios we will keep fixed from ˜
+p, and Dcomp ∶= D′
+2 as the affected
+14
+
+domains whose ratios we recompute. We remap these domain sets because, as seen later in §4.4, we may
+choose to recompute unaffected domains.
+We partition any mix q on D′ as q = [ρqDfix, (1 −ρ)qDcomp], where ρ ∈[0, 1] is the total weight on the
+unaffected domains, and qDfix ∈△∣Dfix∣−1 and qDcomp ∈△∣Dcomp∣−1 are the relative mixes within Dfix and
+Dcomp, respectively. Similarly, we define ˜
+pDfix ∈△∣Dfix∣−1 as the normalized ratios from ˜
+p restricted to Dfix.
+With this notation, the mixture reuse problem is the following approximation of (1):
+minimizeq∈△m′−1 1
+n
+n
+∑
+i=1
+fi(LM(S, R, q))
+(2)
+s.t.
+qj ≤
+kN ′
+j
+R
+∀j ∈[m′]
+qDfix = ˜
+pDfix
+The new constraint qDfix = ˜
+pDfix enforces that the relative ratios among Dfix are the same as in ˜
+p; we optimize
+over a simpler q of the form [ρ˜
+pDfix, (1 −ρ)qDcomp].
+4.2.2
+FullMixtureReuse
+We now describe FullMixtureReuse, our approach for solving the mixture reuse problem (2).
+We use a change of variables that absorbs the constraint qDfix = ˜
+pDfix, transforming (2) into an unconstrained
+optimization problem. For any feasible q = [ρ˜
+pDfix, (1 −ρ)qDcomp], we aggregate all domains in Dfix into
+a single virtual domain and define the collapsed mixture r = [ρ, (1 −ρ)qDcomp] ∈△∣Dcomp∣. We index the
+elements of r by {v} ∪Dcomp, where rv = ρ denotes the virtual domain weight (the total weight on Dfix) and
+rj for j ∈Dcomp are the weights on affected domains. Given ˜
+pDfix, any collapsed mixture r can be expanded
+into a feasible q over D′ via the expansion function Φ˜
+pDfix (r), where qj = rv ⋅˜
+pj for j ∈Dfix, and qj = rj for
+j ∈Dcomp.
+From our earlier example, r = [0.4, 0.6] (i.e., ρ = 0.4 and qDcomp = [1]) with ˜
+pDfix = [0.25, 0.25, 0.5] expands
+into q = Φ˜
+pDfix (r) = [0.1, 0.1, 0.2, 0.6].
+This change of variables transforms the mixture reuse problem into standard mixing on r over 1 + ∣Dcomp∣
+domains (Lemma 1). We can now apply OlmixBase (Algorithm 1) in the collapsed space, which requires
+only O(∣Dcomp∣) proxy runs instead of O(m′). The result is a proposed collapsed mixture r⋆(˜
+pDfix), which
+we expand back to the full domain space as q⋆(˜
+pDfix) = Φ˜
+pDfix (r⋆(˜
+pDfix)). This expanded mixture is our
+final proposed mix over D′. The full procedure is in Algorithm 2, with blue text indicating changes from
+OlmixBase in Algorithm 1.
+4.3
+Theoretical Analysis
+FullMixtureReuse reduces costs by reusing existing ratios, but when does it match versus degrade
+performance compared to full recomputation? We theoretically analyze this, finding that performance depends
+on (1) how much the optimal mix changes due to the domain update, and (2) a coupling effect between Dfix
+and Dcomp. Importantly, we empirically validate our theory in §5.2: we measure the terms in our bounds and
+show they tightly track actual performance gaps across settings.
+Assumptions. We make the following assumptions.
+1. Log linear model holds: For each task i ∈[n], performance can be expressed as fi(LM(S, R, q)) =
+ci + exp(A⊤
+i q) for some ci ∈R+, Ai ∈Rm′
+.
+2. Full recomputation minimizes (1), and FullMixtureReuse minimizes (2).
+Definitions. Define performance of q as F(q) ∶=
+1
+n ∑n
+i=1 fi(LM(S, R, q)). q⋆is the solution to (1), and
+q⋆(˜
+pDfix) is the solution to (2). We study the performance gap of FullMixtureReuse, F(q⋆(˜
+pDfix))-F(q⋆).
+15
+
+Algorithm 2 FullMixtureReuse
+1: Input: Domain set D′ = Dfix ∪Dcomp of sizes {N ′
+1, . . . , N ′
+m′}, existing mix ˜
+p ∈△m−1, swarm
+size K = O(m), repetition factor k, requested tokens R, KL penalty λ, natural distribution
+r0 ∈△∣Dcomp∣.
+2: Sample mixes r1, . . . , rK ∈△∣Dcomp∣and expand each collapsed mix rj into qj ∶= Φ˜
+pDfix (rj).
+3: Train proxy models on the expanded mixes and evaluate on downstream tasks to get a dataset
+of mixes and performance, {(rj, {yij}n
+i=1}K
+j=1, where yij ∶= fi(LM(Ssmall, Rsmall, qj)).
+4: for i ∈[n] do
+5:
+Use {(rj, yij)}K
+j=1 to fit the log-linear model ˆ
+gi(r) = di + exp(B⊤
+i r), where di ∈R+ and
+Bi ∈R∣Dcomp∣.
+6: end for
+7: Solve the following optimization problem to get r⋆(˜
+pDfix):
+minimizer∈△∣Dcomp∣1
+n
+n
+∑
+i=1
+ˆ
+gi(r) + λDKL(r∣∣r0)
+subject to
+rv ≤min
+j∈Dfix {
+kN ′
+j
+R˜
+pj }, rj ≤
+kN ′
+j
+R
+∀j ∈Dcomp
+8: Return q⋆(˜
+pDfix) ∶= Φ˜
+pDfix (r⋆(˜
+pDfix)), the expanded form of r⋆(˜
+pDfix).
+Swarm
+Regression
+Optimization
+Let q⋆
+Dfix denote the optimal mix on Dfix after the domain set update, such that q⋆= [ρ⋆q⋆
+Dfix, (1−ρ⋆)q⋆
+Dcomp].
+Let κ(Dfix, Dcomp) denote a coupling term (defined in Appendix C.1) that captures task influence of Dfix
+versus Dcomp.
+4.3.1
+Performance Characterization
+Our first result characterizes the performance gap in terms of ˜
+pDfix itself. See Appendix C.2 for the proof.
+Theorem 1 (Performance gap bound). There exists a finite C1 > 0 such that the performance gap is bounded
+by
+F(q⋆(˜
+pDfix)) −F(q⋆) ≤C1κ(Dfix, Dcomp)∥˜
+pDfix −q⋆
+Dfix∥.
+The performance gap is controlled by two factors:
+• ∥˜
+pDfix −q⋆
+Dfix∥(“reuse gap”): how close the mix we reuse is to the optimal mix after the update.
+• κ(Dfix, Dcomp): this coupling term is large when Dfix and Dcomp impact the same set of downstream tasks.
+It controls the rate at which performance depends on the reuse gap.
+When both terms are small, FullMixtureReuse matches full recomputation. Our empirical validation
+(Figure 13) confirms that the reuse gap strongly predicts actual performance gaps across different scenarios.
+4.3.2
+Reuse Gap
+Theorem 1 shows that the performance gap is governed by the reuse gap, but when is the reuse gap small?
+We analyze the case where ˜
+p is assumed to be optimal before the update, and the domain set is modified via
+an Add update. Proofs and results on other operators are in Appendix C.3.
+Theorem 2. Define ˜
+p as the solution to (1) on D and suppose that new domains are added. There exists a
+finite C2 > 0 such that the reuse gap is bounded by
+∥˜
+pDfix −q⋆
+Dfix∥≤C2κ(Dfix, Dcomp)(1 −ρ⋆).
+16
+
+The reuse gap is controlled by two factors:
+• κ(Dfix, Dcomp): the coupling term, also in Theorem 1.
+• 1 −ρ⋆: this term captures how much newly added domains move the optimum, since 1 is effectively ρ
+induced by ˜
+p before domains are added. This term can be small when: 1) the added domains are low
+utility, or 2) the added domains have little data, so the repetition constraint caps their maximum weight.
+Our empirical validation (Figures 14- 16) shows that the success of FullMixtureReuse when adding
+domains correlates with small 1 −ρ⋆and low coupling.
+4.4
+PartialMixtureReuse
+Our analysis (§4.3) shows that FullMixtureReuse may underperform full recomputation when coupling
+between Dfix and Dcomp is high. We propose PartialMixtureReuse (Figure 9 center) as a middle ground:
+rather than reusing all unaffected domains, it selectively recomputes some, reducing coupling while keeping
+costs below full recomputation.
+Method Let Dpartial ⊂D1 be a subset of unaffected domains we reuse. We redefine the domains we reuse
+versus recompute as Dfix ∶= Dpartial and Dcomp ∶= (D1 \ Dpartial) ∪D′
+2, and then apply FullMixtureReuse
+(Algorithm 2) with this new partition. The mixing problem has dimension 1+∣D′
+2∣+∣D1\Dpartial∣, interpolating
+between FullMixtureReuse’s 1 + ∣D′
+2∣and full recomputation’s m′. Since swarm cost scales linearly with
+dimension (RQ2), this directly interpolates computational cost.
+Interpretation and Empirical Validation Carefully choosing Dpartial can reduce the coupling κ(Dfix, Dcomp)
+from Theorem 1. An intuitive example: when adding code data to web topics, the software development
+web topic should be recomputed alongside it since both strongly influence code evaluation tasks. Figure 16
+confirms that this reduces coupling and improves performance compared to reusing all web topics.
+5
+Experimental Results
+In §5.1, we evaluate Olmix—using FullMixtureReuse and PartialMixtureReuse, with recomputation
+done via OlmixBase—in an LM development setting where the domain set evolves through several updates.
+In §5.2, we empirically validate our results from §4.3, confirming that our theoretical analysis accurately
+characterizes mixture reuse performance in practice.
+5.1
+Real-World LM Development Scenario
+We evaluate FullMixtureReuse and PartialMixtureReuse across a sequence of five domain updates
+mirroring real-world LM development. Our results show that these methods maintain strong performance
+while substantially reducing computational costs compared to full recomputation.
+5.1.1
+Setup
+See Appendix D.1 for full experiment details on evaluation tasks and the 1B target models we train.
+DomainUpdates We simulate a real-world LM development workflow with an initial web corpus that undergoes
+5 updates (Table 5). The final domain set contains 64 domains (token counts in Table 8).
+Methods compared. We consider:
+• Natural: mix proportional to domain sizes.
+• Full recomputation: apply OlmixBase after each update (high performance, high cost).
+• Swarm reuse: reuse all accumulated proxy runs that can represented on D′ and apply OlmixBase on the
+combined swarm (see Algorithm 3).
+• FullMixtureReuse (our method): reuse ratios for unaffected domains, recompute affected ones.
+17
+
+Table 5 Datasets used for simulated domain updates.
+Operation
+Dataset(s)
+∆m
+Initial
+DCLM (Li et al., 2024) partitioned into topical domains using WebOrganizer (Wettig et al., 2025))
+24
+Add
+Stack-Edu (Allal et al., 2025), partitioned by programming language
++15
+Add
+ArXiv (Azerbayev et al., 2023), FineMath 3+ (Allal et al., 2025),
+olmOCR Science PDFs (Olmo et al., 2025), Dolma 1 Wikipedia (Soldaini
+et al., 2024), AlgebraicStack (Azerbayev et al., 2023), pes2o (Soldaini
+and Lo, 2023)
++6
+Revise
+olmOCR Science PDFs (Olmo et al., 2025) (reformatted tables and
+references)
+0
+Remove
+AlgebraicStack (Azerbayev et al., 2023)
+−1
+Partition
+olmOCR Science PDFs (Olmo et al., 2025), partitioned into topical
+domains using WebOrganizer (Wettig et al., 2025)
++20
+• PartialMixtureReuse (our method): reuse ratios within DCLM topics and within Stack-Edu languages
+while recomputing at the source level; recompute DCLM:software development when adding Stack-Edu
+due to high coupling (see § 5.2.2 for justification).
+Experimental protocol. For full recomputation, we use swarm size K ≈c(m + 1) and vary c ∈{1, 2, 3} to
+showcase different compute regimes. For swarm reuse and mixture reuse, we set swarm sizes to roughly match
+that of full recomputation with c = 1. We report results over 3 random seeds of swarms with k = 4, R = 1T.
+Full details are in Appendix D.2.
+200
+300
+400
+500
+600
+700
+800
+Total number of proxy runs throughout LM development
+10.5
+11.0
+11.5
+12.0
+12.5
+% Improvement over Natural Distribution
+Better
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Partial Mixture Reuse (Ours)
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Partial Mixture Reuse (Ours)
+Figure 10 Performance improvement versus cost of mixing under evolving domains. FullMixtureReuse and
+PartialMixtureReuse achieve > 95% of the improvement of full recomputation while using at least 67% fewer proxy
+runs.
+5.1.2
+Results
+See Appendix D.3 for additional results on: 1) R = 6T, 2) smaller proxy run budgets, and 3) individual
+domain update operators.
+FullMixtureReuse roughly matches full recomputation at substantially lower cost. Figure 10 shows relative
+improvement in downstream performance (average BPB) over the natural distribution versus the total
+number of proxy runs across all 5 updates. FullMixtureReuse achieves 95% of full recomputation’s (c=3)
+18
+
+10000
+20000
+30000
+40000
+50000
+60000
+Training Step
+0.600
+0.650
+0.700
+0.750
+0.800
+0.850
+0.900
+0.950
+ Average Downstream Task BPB
+3.05× faster
+12.2% better
+Mixture
+Natural
+Partial Mixture Reuse (Ours)
+Figure 11
+Downstream performance across training for PartialMixtureReuse (best seed) versus the natural
+distribution. PartialMixtureReuse reaches the natural distribution’s final performance in 3.05× fewer steps.
+performance improvement (+11.6% versus +12.2%) while using 74% fewer total proxy runs (216 versus 832).
+PartialMixtureReuse closes the remaining gap between FullMixtureReuse and full recomputation. By selectively recomputing some unaffected domains, PartialMixtureReuse achieves 98% of full recomputation’s
+performance (+12.0%) with 272 total runs—still 67% fewer than full recomputation.
+Mixture reuse outperforms swarm reuse. Swarm reuse achieves +11.4% with 268 runs, underperforming
+FullMixtureReuse (+11.6% with 216 runs) despite using more runs. This is likely because (1) representing
+old swarms on updated domain sets over-explores biased subspaces, and (2) swarms cannot be reused when
+domains are removed or revised.
+At matched proxy run budgets, mixture reuse outperforms alternatives. At a budget of 216-272 proxy runs,
+FullMixtureReuse and PartialMixtureReuse achieve +11.6% and +12.0% improvement over the
+natural distribution, respectively. At this same budget, swarm reuse achieves +11.4% and full recomputation
+achieves +10.8% (c = 1).
+Our best mixture is 3.05× more data-efficient than the natural distribution. Beyond final performance,
+we measure data efficiency: how many training steps does our best learned mixture need to match the
+natural distribution’s final performance? Figure 11 shows that PartialMixtureReuse reaches the natural
+distribution’s final BPB in approximately 20,000 steps versus 61,000 steps—a 3.05× speedup.
+Qualitative analysis of learned mixtures. Figure 12 shows the final proposed mixes over a subset of domains
+(full mix in Table 14). PartialMixtureReuse is more similar to full recomputation (total variation distance
+of 0.067) than to the natural distribution (distance of 0.127), aligning with our downstream performance
+findings.
+5.2
+Empirical Validation of Theorems 1 and 2
+We empirically measure the terms in Theorems 1 and 2 to assess whether they track the performance of
+mixture reuse.
+5.2.1
+Setup
+We consider two examples of an Add update:
+• D1 =DCLM (Li et al., 2024) partitioned into 24 topic-based domains using WebOrganizer (Wettig et al.,
+19
+
+stack-edu:Python
+ArXiv
+finemath-3plus pdf:sci_tech
+dclm:politics
+0.0
+0.02
+0.04
+0.06
+0.08
+0.1
+0.12
+0.14
+Weight
+0.072
+0.037
+0.136
+0.030
+0.035
+0.053
+0.023
+0.136
+0.015
+0.012
+0.003
+0.003
+0.005
+0.068
+0.098
+Full Recomputation
+Partial Mixture Reuse
+Natural
+Figure 12 Proposed mixes for different mixing strategies. The mixes produced by full recomputation and PartialMixtureReuse are more similar to each other than they are to the natural distribution, confirming the performance
+results in Figure 10. Domains shown have the greatest difference in weights between full recomputation and natural.
+2025), D′
+2 = Stack-Edu (Allal et al., 2025) partitioned into 15 programming languages.
+• D1 =DCLM partitioned into 24 topic-based domains using WebOrganizer, D′
+2 = olmOCR Science PDFs (Olmo
+et al., 2025) partitioned into 21 topic-based domains using WebOrganizer.
+5.2.2
+Results
+Performance is correlated with the reuse gap. Mixture reuse yields q⋆(˜
+pDfix) from Algorithm 2 given reused
+ratios ˜
+pDfix. Full recomputation yields q⋆from directly solving (1) for the optimal mix on D′. Theorem 1
+shows that the performance gap of mixture reuse, F(q⋆(˜
+pDfix)) −F(q⋆), where F is the average downstream
+task BPB, is bounded in terms of the reuse gap, ∥˜
+pDfix −q⋆
+Dfix∥, where q⋆
+Dfix is q⋆normalized over Dfix. We
+validate that the reuse gap predicts the performance gap.
+To do this, we construct different values of ˜
+pDfix with varying reuse gaps and measure the resulting performance
+gaps. We first approximate q⋆
+Dfix (and F(q⋆)) by running full recomputation on D′ using OlmixBase and
+normalizing the resulting mix over Dfix. We then construct two ˜
+pDfix:
+• Weak mix: to construct a ˜
+pDfix far from q⋆
+Dfix, we run OlmixBase on D′ with a modified objective that
+maximizes BPB and then normalize the resulting mix over Dfix.
+• Intermediate mix: we average the weak mix with q⋆
+Dfix.
+Figure 13 confirms the findings of Theorem 1: as the reuse gap increases, the performance gap also increases
+across both settings.
+The reuse gap is controlled by how much the domain update shifts the optimal mixture. When adding domains,
+Theorem 2 shows that the reuse gap (and consequently the performance gap) depends on how much total
+weight shifts to the affected domains. Specifically, the reuse gap depends on 1 −ρ⋆, where ρ⋆is the total
+weight on the reused domains D1 in the optimal mix q⋆. We validate that 1 −ρ⋆predicts both the reuse gap
+and performance gap.
+To do this, we construct settings with different ρ⋆by varying the repetition constraint. A tight constraint
+(small k or large R in (1)) forces the mix to stay close to the natural distribution, yielding ρ⋆≈1 when D1
+is much larger than the added domains. A relaxed constraint allows more weight to shift to new domains,
+potentially yielding smaller ρ⋆. We test two settings: R = 1T (relaxed) and R = 6T (tight). For each R, we 1)
+compute ˜
+pDfix by running OlmixBase on D; 2) apply FullMixtureReuse on D′ using ˜
+pDfix; and 3) use full
+recomputation (run OlmixBase on D′) to get an approximate ρ⋆, the reuse gap, and the performance gap.
+20
+
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+Reuse Gap pDfix
+qDfix
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+Performance Gap F(q (pDfix))
+F(q )
+D1=DCLM, D′
+2 = Stack-Edu
+D1=DCLM, D′
+2 = Science PDFs
+Figure 13 Performance vs Reuse Gap. The optimality of ˜
+pDfix after the domain update is correlated with the success
+of mixture reuse.
+1
+Reuse Gap
+Performance Gap
+0.00
+0.10
+0.20
+0.30
+0.40
+0.0682
+0.1726
+-0.0025
+0.3355
+0.4011
+0.0145
+D1=DCLM, D′
+2=Stack-Edu
+1
+Reuse Gap
+Performance Gap
+0.0826
+0.1814
+-0.0134
+0.1658
+0.2813
+0.0364
+D1=DCLM, D′
+2=S2PDF
+6T (tight repetition constraints)
+1T (relaxed repetition constraints)
+Figure 14 Performance gap vs reuse gap vs 1 −ρ⋆when adding Stack-Edu to DCLM (left) and olmOCR Science
+PDFs to DCLM (right). Varying R changes ρ⋆, and we observe that 1 −ρ⋆propagates to both the reuse gap and
+performance gap, validating Theorem 2.
+Figure 14 shows that larger 1 −ρ⋆correlates with both a larger reuse gap and a larger performance gap across
+both settings, validating that the extent to which the domain update shifts the optimal mixture directly
+impacts mixture reuse performance.
+PartialMixtureReuse reduces coupling and improves performance. Theorems 1 and 2 show that the coupling
+term κ controls the rate at which changes in optimality translate to the performance gap. The coupling term
+is large when both reused domains Dfix and recomputed domains Dcomp impact similar downstream tasks.
+We validate that reducing coupling—by adjusting Dfix vs Dcomp via PartialMixtureReuse—improves both
+the reuse gap and performance gap.
+To do this, we analyze a scenario where coupling is high: adding Stack-Edu to DCLM topics when R = 1T
+(from Figure 14 left, purple). Figure 15 compares the reused ratios ˜
+pDfix against the optimal ratios q⋆
+Dfix
+over DCLM topics.
+There is a stark difference in the weight on DCLM’s software development topic,
+suggesting high coupling between software development and Stack-Edu. Based on this, we test whether
+PartialMixtureReuse with Dcomp = Stack-Edu ∪{DCLM:software_development} reduces coupling and
+improves performance compared to FullMixtureReuse (which uses Dcomp = Stack-Edu).
+Figure 16 shows that recomputing DCLM:software_development along with Stack-Edu reduces both the reuse
+gap and performance gap, despite 1 −ρ⋆being larger for PartialMixtureReuse. This breaks the pattern
+21
+
+software
+dev
+scimath
+tech
+health
+literature
+industrial entertain.
+history
+geo
+0.0
+0.1
+0.2
+0.3
+0.4
+Weight
+0.434
+0.301
+0.100
+0.092
+0.053
+0.003
+0.003
+0.070
+0.389
+0.073
+0.049
+0.007
+0.076
+0.043
+DCLM-only pDfix
+DCLM+StackEdu qDfix
+Figure 15 Comparison of ˜
+pDfix versus q⋆
+Dfix (top-7 domains according to ˜
+pDfix) when D1 =DCLM, D′
+2=Stack-Edu
+with R = 1T. The only domain that significantly differs in mixture weight is software development, suggesting that
+PartialMixtureReuse can reduce coupling if we recompute DCLM:software_development.
+1 - *
+Reuse Gap
+Performance Gap
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+0.3355
+0.4011
+0.0145
+0.3818
+0.2445
+0.0017
+Full Mixture Reuse
+Partial Mixture Reuse
+Figure 16
+Performance of PartialMixtureReuse (recompute DCLM:software_development) for D1=DCLM,
+D′
+2=Stack-Edu with R = 1T. Recomputing DCLM:software development along with Stack-Edu reduces both the reuse
+gap and the performance gap, even though its 1 −ρ⋆is higher.
+seen in Figure 14: larger 1 −ρ⋆no longer translates to a larger performance gap, suggesting that the reduction
+in the coupling term κ dominates. To confirm this directly, we compute κ (see Appendix C.1 for definition)
+for FullMixtureReuse and κ for PartialMixtureReuse with Dcomp = Stack-Edu ∪{DCLM:topic} for
+each DCLM topic. Figure 17 shows that recomputing DCLM:software_development reduces κ far more than
+recomputing any other DCLM topic, validating that PartialMixtureReuse reduces coupling.
+6
+Discussion
+We presented Olmix, addressing two key challenges in data mixing for language models: configuring effective
+mixing methods and efficiently updating mixtures as domain sets evolve. We conduct a large empirical study
+of design choices and introduce mixture reuse.
+Limitations. First, our work focuses exclusively on the offline mixing schema. While this schema is widely
+adopted, other approaches, such as those that use a dynamic mix to explore the mixture weight space (Xie
+et al., 2023; Fan et al., 2024), may benefit from different design choices. Second, our theoretical analysis
+of mixture reuse assumes log-linear regression models.
+The analysis should extend naturally to other
+parametric models like AutoScale (Kang et al., 2025) and BiMix (Ge et al., 2025b), but it is less clear how to
+extend it to non-parametric models that yield non-convex and non-differentiable mixing objectives. Third,
+PartialMixtureReuse requires determining the subset of unaffected domains to recompute. Some cases are
+quite intuitive; for instance, recomputing DCLM:software_development when Stack-Edu code data is added.
+However, we do not provide a general automated approach for determining what to recompute, limiting
+22
+
+software dev
+fashion
+beauty
+travel
+tourism
+transportation industrial adult content
+DCLM domain recomputed (with Stack-Edu)
+0
+100
+200
+300
+400
+500
+Coupling ( ) reduction when domain is recomputed
+518.4
+201.0
+152.9
+96.5
+87.3
+82.3
+Figure 17 The top-6 DCLM domains for which recomputation results in the greatest reduction in κ for D=DCLM,
+D′=DCLM+Stack-Edu. The reduction from recomputing DCLM:software development via PartialMixtureReuse is
+substantially higher than recomputing other DCLM topics.
+PartialMixtureReuse’s applicability without domain expertise.
+Future work. First, we aim to extend mixture reuse and our design choice study to online mixing methods that
+adjust mixtures during training. This is in contrast with this work, which focuses on the LM development
+that occurs before the final model starts training. Second, we envision co-design of data mixing with other LM
+development workflows, such as using mixture performance as feedback for data quality filtering or domain
+discovery. Third, validating our findings at larger model scales would improve confidence in the reliability of
+our design choices and reuse mechanisms.
+Author Contributions
+Mayee F. Chen led the project during an internship at Ai2: she developed the theoretical framework,
+implemented all methods, designed and ran all experiments, validated the approach at scale for OLMo 3, and
+wrote the paper. Kyle Lo and Luca Soldaini were the primary mentors and worked closely with Mayee on
+developing the methodology, designing experiments, integrating into Olmo 3, and writing the paper. Tyler
+Murray built and maintained the training infrastructure that enabled large-scale experimentation. David
+Heineman designed small-scale evaluation metrics for data mixing. Matt Jordan contributed to mixing
+methodology. Hannaneh Hajishirzi and Christopher Ré provided research guidance and helped frame the
+work.
+Acknowledgments
+We thank Neel Guha, Junmiao Hu, Ronny Junkins, Pang Wei Koh, Jerry Liu, Roberto Garcia Torres, Alex
+Wettig, Steven Euijong Whang, and Michael Zhang for helpful feedback and discussions. We thank the Olmo
+3 team, particularly Allyson Ettinger, for iterative feedback and experimental validation of Olmix. MC was
+supported in part by the Office of Naval Research (ONR) under No. N000142312633 (Deep Signal Processing).
+Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors
+and do not necessarily reflect the views, policies, or endorsements, either expressed or implied, of ONR or the
+U.S. Government.
+23
+
+References
+A. Albalak, L. Pan, C. Raffel, and W. Y. Wang. Efficient online data mixing for language model pre-training, 2023.
+URL https://arxiv.org/abs/2312.02406.
+A. Albalak, Y. Elazar, S. M. Xie, S. Longpre, N. Lambert, X. Wang, N. Muennighoff, B. Hou, L. Pan, H. Jeong,
+C. Raffel, S. Chang, T. Hashimoto, and W. Y. Wang. A survey on data selection for language models, 2024. URL
+https://arxiv.org/abs/2402.16827.
+L. B. Allal, A. Lozhkov, and E. Bakouch. Smollm - blazingly fast and remarkably powerful, 07 2024.
+L. B. Allal, A. Lozhkov, E. Bakouch, G. M. Blázquez, G. Penedo, L. Tunstall, A. Marafioti, H. Kydlíček, A. P. Lajarín,
+V. Srivastav, J. Lochner, C. Fahlgren, X.-S. Nguyen, C. Fourrier, B. Burtenshaw, H. Larcher, H. Zhao, C. Zakka,
+M. Morlon, C. Raffel, L. von Werra, and T. Wolf. Smollm2: When smol goes big – data-centric training of a small
+language model, 2025. URL https://arxiv.org/abs/2502.02737.
+J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le, et al. Program
+synthesis with large language models. arXiv preprint arXiv:2108.07732, 2021.
+Z. Azerbayev, H. Schoelkopf, K. Paster, M. D. Santos, S. McAleer, A. Q. Jiang, J. Deng, S. Biderman, and S. Welleck.
+Llemma: An open language model for mathematics, 2023.
+E. Bakouch, L. Ben Allal, A. Lozhkov, N. Tazi, L. Tunstall, C. M. Patiño, E. Beeching, A. Roucher, A. J. Reedi,
+Q. Gallouédec, K. Rasul, N. Habib, C. Fourrier, H. Kydlicek, G. Penedo, H. Larcher, M. Morlon, V. Srivastav,
+J. Lochner, X.-S. Nguyen, C. Raffel, L. von Werra, and T. Wolf. SmolLM3: smol, multilingual, long-context reasoner.
+https://huggingface.co/blog/smollm3, 2025.
+L. Belenki, A. Agarwal, T. Shi, and K. Toutanova. Optimizing pre-training data mixtures with mixtures of data expert
+models, 2025. URL https://arxiv.org/abs/2502.15950.
+Y. Bisk, R. Zellers, R. Le bras, J. Gao, and Y. Choi. PIQA: Reasoning about physical commonsense in natural
+language.
+Proceedings of the AAAI Conference on Artificial Intelligence, 34(05):7432–7439, Apr. 2020.
+doi:
+10.1609/aaai.v34i05.6239. URL https://ojs.aaai.org/index.php/AAAI/article/view/6239.
+F. Cassano, J. Gouwar, D. Nguyen, S. Nguyen, L. Phipps-Costin, D. Pinckney, M.-H. Yee, Y. Zi, C. J. Anderson,
+M. Q. Feldman, et al. Multipl-e: A scalable and extensible approach to benchmarking neural code generation. arXiv
+preprint arXiv:2208.08227, 2022.
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph,
+G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray,
+N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert,
+F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin,
+S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford,
+M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever,
+and W. Zaremba. Evaluating large language models trained on code. 2021.
+M. F. Chen, N. Roberts, K. Bhatia, J. Wang, C. Zhang, F. Sala, and C. Ré. Skill-it! a data-driven skills framework for
+understanding and training language models, 2023. URL https://arxiv.org/abs/2307.14430.
+M. F. Chen, M. Y. Hu, N. Lourie, K. Cho, and C. Ré. Aioli: A unified optimization framework for language model
+data mixing, 2025a. URL https://arxiv.org/abs/2411.05735.
+S. Chen, X. Ouyang, M. A. L. Pearce, T. Hartvigsen, and J. R. Schwarz. Admire-bayesopt: Accelerated data mixture
+re-weighting for language models with bayesian optimization, 2025b. URL https://arxiv.org/abs/2508.11551.
+H. W. Chung, N. Constant, X. Garcia, A. Roberts, Y. Tay, S. Narang, and O. Firat. Unimax: Fairer and more effective
+language sampling for large-scale multilingual pretraining, 2023. URL https://arxiv.org/abs/2304.09151.
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord. Think you have solved question
+answering? Try ARC, the AI2 reasoning challenge. CoRR, arXiv:1803.05457, 2018.
+S. Diao, Y. Yang, Y. Fu, X. Dong, D. Su, M. Kliegl, Z. Chen, P. Belcak, Y. Suhara, H. Yin, M. Patwary, Yingyan, Lin,
+J. Kautz, and P. Molchanov. Climb: Clustering-based iterative data mixture bootstrapping for language model
+pre-training, 2025. URL https://arxiv.org/abs/2504.13161.
+D. Dua, Y. Wang, P. Dasigi, G. Stanovsky, S. Singh, and M. Gardner. DROP: A reading comprehension benchmark
+requiring discrete reasoning over paragraphs. In J. Burstein, C. Doran, and T. Solorio, editors, Proceedings of the
+24
+
+2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language
+Technologies, Volume 1 (Long and Short Papers), pages 2368–2378, Minneapolis, Minnesota, June 2019. Association
+for Computational Linguistics. doi: 10.18653/v1/N19-1246. URL https://aclanthology.org/N19-1246.
+S. Fan, M. Pagliardini, and M. Jaggi.
+Doge: Domain reweighting with generalization estimation, 2024.
+URL
+https://arxiv.org/abs/2310.15393.
+A. Ge, T.-H. Huang, J. Cooper, A. Trost, Z. Chu, S. S. S. N. GNVV, Z. Cai, K. Park, N. Roberts, and F. Sala.
+R&b: Domain regrouping and data mixture balancing for efficient foundation model training, 2025a.
+URL
+https://arxiv.org/abs/2505.00358.
+C. Ge, Z. Ma, D. Chen, Y. Li, and B. Ding. Bimix: A bivariate data mixing law for language model pretraining, 2025b.
+URL https://arxiv.org/abs/2405.14908.
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathurx, A. Schelten,
+A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark,
+A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux,
+C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis,
+D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano,
+D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán,
+F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen,
+H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet,
+J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu,
+J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V.
+Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu,
+K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan,
+L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas,
+M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan,
+N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy,
+P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong,
+R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel,
+R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa,
+S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang,
+S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler,
+T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta,
+V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu,
+W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur,
+Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh,
+A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma,
+A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples,
+A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury,
+A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd,
+B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido,
+B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C.-H. Chu, C. Cai,
+C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine,
+D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery,
+E. Presani, E. Hahn, E. Wood, E.-T. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk,
+F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee,
+G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou,
+H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog,
+I. Tufanov, I. Leontiadis, I.-E. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J.-B. Gaya,
+J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill,
+J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand,
+K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen,
+L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani,
+M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu,
+M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J.
+Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo,
+N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent,
+P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj,
+Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan,
+25
+
+R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon,
+S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin,
+S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen,
+S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury,
+S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou,
+T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru,
+V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang,
+X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu,
+Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and
+Z. Ma. The llama 3 herd of models, 2024. URL https://arxiv.org/abs/2407.21783.
+D. Groeneveld, I. Beltagy, P. Walsh, A. Bhagia, R. Kinney, O. Tafjord, A. Jha, H. Ivison, I. Magnusson, Y. Wang,
+S. Arora, D. Atkinson, R. Authur, K. R. Chandu, A. Cohan, J. Dumas, Y. Elazar, Y. Gu, J. Hessel, T. Khot,
+W. Merrill, J. D. Morrison, N. Muennighoff, A. Naik, C. Nam, M. E. Peters, V. Pyatkin, A. Ravichander, D. Schwenk,
+S. Shah, W. Smith, E. Strubell, N. Subramani, M. Wortsman, P. Dasigi, N. Lambert, K. Richardson, L. S. Zettlemoyer,
+J. Dodge, K. Lo, L. Soldaini, N. A. Smith, and H. Hajishirzi. Olmo: Accelerating the science of language models.
+ArXiv, abs/2402.00838, 2024. URL https://api.semanticscholar.org/CorpusID:267365485.
+D. Heineman, V. Hofmann, I. Magnusson, Y. Gu, N. A. Smith, H. Hajishirzi, K. Lo, and J. Dodge. Signal and noise: A
+framework for reducing uncertainty in language model evaluation, 2025. URL https://arxiv.org/abs/2508.13144.
+W. Held, B. Paranjape, P. S. Koura, M. Lewis, F. Zhang, and T. Mihaylov. Optimizing pretraining data mixtures
+with llm-estimated utility, 2025. URL https://arxiv.org/abs/2501.11747.
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt. Measuring massive multitask
+language understanding. Proceedings of the International Conference on Learning Representations (ICLR), 2021.
+Y. Huang, J. Zhang, Z. Shan, and J. He. Compression represents intelligence linearly. In First Conference on Language
+Modeling, 2024. URL https://openreview.net/forum?id=SHMj84U5SH.
+Y. Jiang, A. Zhou, Z. Feng, S. Malladi, and J. Z. Kolter. Adaptive data optimization: Dynamic sample selection with
+scaling laws, 2024. URL https://arxiv.org/abs/2410.11820.
+F. Kang, Y. Sun, B. Wen, S. Chen, D. Song, R. Mahmood, and R. Jia. Autoscale: Scale-aware data mixing for
+pre-training llms, 2025. URL https://arxiv.org/abs/2407.20177.
+T. Kwiatkowski, J. Palomaki, O. Redfield, M. Collins, A. Parikh, C. Alberti, D. Epstein, I. Polosukhin, J. Devlin,
+K. Lee, K. Toutanova, L. Jones, M. Kelcey, M.-W. Chang, A. M. Dai, J. Uszkoreit, Q. Le, and S. Petrov. Natural
+questions: A benchmark for question answering research. Transactions of the Association for Computational
+Linguistics, 7:452–466, 2019. doi: 10.1162/tacl_a_00276. URL https://aclanthology.org/Q19-1026.
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag,
+T. Gutman-Solo, et al.
+Solving quantitative reasoning problems with language models.
+Advances in neural
+information processing systems, 35:3843–3857, 2022.
+J. Li, A. Fang, G. Smyrnis, M. Ivgi, M. Jordan, S. Gadre, H. Bansal, E. Guha, S. Keh, K. Arora, S. Garg, R. Xin,
+N. Muennighoff, R. Heckel, J. Mercat, M. Chen, S. Gururangan, M. Wortsman, A. Albalak, Y. Bitton, M. Nezhurina,
+A. Abbas, C.-Y. Hsieh, D. Ghosh, J. Gardner, M. Kilian, H. Zhang, R. Shao, S. Pratt, S. Sanyal, G. Ilharco, G. Daras,
+K. Marathe, A. Gokaslan, J. Zhang, K. Chandu, T. Nguyen, I. Vasiljevic, S. Kakade, S. Song, S. Sanghavi, F. Faghri,
+S. Oh, L. Zettlemoyer, K. Lo, A. El-Nouby, H. Pouransari, A. Toshev, S. Wang, D. Groeneveld, L. Soldaini, P. W.
+Koh, J. Jitsev, T. Kollar, A. G. Dimakis, Y. Carmon, A. Dave, L. Schmidt, and V. Shankar. Datacomp-lm: In search
+of the next generation of training sets for language models, 2024. URL https://arxiv.org/abs/2406.11794.
+Q. Liu, X. Zheng, N. Muennighoff, G. Zeng, L. Dou, T. Pang, J. Jiang, and M. Lin. Regmix: Data mixture as
+regression for language model pre-training, 2025a. URL https://arxiv.org/abs/2407.01492.
+Y. Liu, C. Chen, J. Yang, and R. Sun. Rethinking data mixture for large language models: A comprehensive survey
+and new perspectives, 2025b. URL https://arxiv.org/abs/2505.21598.
+A. Lozhkov, R. Li, L. B. Allal, F. Cassano, J. Lamy-Poirier, N. Tazi, A. Tang, D. Pykhtar, J. Liu, Y. Wei, et al.
+Starcoder 2 and the stack v2: The next generation. arXiv preprint arXiv:2402.19173, 2024.
+P. Maini, S. Seto, H. Bai, D. Grangier, Y. Zhang, and N. Jaitly. Rephrasing the web: A recipe for compute and
+data-efficient language modeling, 2024. URL https://arxiv.org/abs/2401.16380.
+26
+
+MosaicML. Llm foundry - jeopardy dataset. https://github.com/mosaicml/llm-foundry/blob/main/scripts/eval/
+local_data/world_knowledge/jeopardy_all.jsonl, 2024. Accessed: 2024-11-10.
+N. Muennighoff, A. M. Rush, B. Barak, T. L. Scao, A. Piktus, N. Tazi, S. Pyysalo, T. Wolf, and C. Raffel. Scaling
+data-constrained language models, 2025. URL https://arxiv.org/abs/2305.16264.
+T. OLMo, P. Walsh, L. Soldaini, D. Groeneveld, K. Lo, S. Arora, A. Bhagia, Y. Gu, S. Huang, M. Jordan, N. Lambert,
+D. Schwenk, O. Tafjord, T. Anderson, D. Atkinson, F. Brahman, C. Clark, P. Dasigi, N. Dziri, M. Guerquin,
+H. Ivison, P. W. Koh, J. Liu, S. Malik, W. Merrill, L. J. V. Miranda, J. Morrison, T. Murray, C. Nam, V. Pyatkin,
+A. Rangapur, M. Schmitz, S. Skjonsberg, D. Wadden, C. Wilhelm, M. Wilson, L. Zettlemoyer, A. Farhadi, N. A.
+Smith, and H. Hajishirzi. 2 olmo 2 furious, 2024. URL https://arxiv.org/abs/2501.00656.
+T. Olmo, :, A. Ettinger, A. Bertsch, B. Kuehl, D. Graham, D. Heineman, D. Groeneveld, F. Brahman, F. Timbers,
+H. Ivison, J. Morrison, J. Poznanski, K. Lo, L. Soldaini, M. Jordan, M. Chen, M. Noukhovitch, N. Lambert, P. Walsh,
+P. Dasigi, R. Berry, S. Malik, S. Shah, S. Geng, S. Arora, S. Gupta, T. Anderson, T. Xiao, T. Murray, T. Romero,
+V. Graf, A. Asai, A. Bhagia, A. Wettig, A. Liu, A. Rangapur, C. Anastasiades, C. Huang, D. Schwenk, H. Trivedi,
+I. Magnusson, J. Lochner, J. Liu, L. J. V. Miranda, M. Sap, M. Morgan, M. Schmitz, M. Guerquin, M. Wilson,
+R. Huff, R. L. Bras, R. Xin, R. Shao, S. Skjonsberg, S. Z. Shen, S. S. Li, T. Wilde, V. Pyatkin, W. Merrill, Y. Chang,
+Y. Gu, Z. Zeng, A. Sabharwal, L. Zettlemoyer, P. W. Koh, A. Farhadi, N. A. Smith, and H. Hajishirzi. Olmo 3,
+2025. URL https://arxiv.org/abs/2512.13961.
+A. Pal, L. K. Umapathi, and M. Sankarasubbu. Medmcqa: A large-scale multi-subject multi-choice dataset for medical
+domain question answering. In G. Flores, G. H. Chen, T. Pollard, J. C. Ho, and T. Naumann, editors, Proceedings
+of the Conference on Health, Inference, and Learning, volume 174 of Proceedings of Machine Learning Research,
+pages 248–260. PMLR, 07–08 Apr 2022. URL https://proceedings.mlr.press/v174/pal22a.html.
+D. Paperno, G. Kruszewski, A. Lazaridou, Q. N. Pham, R. Bernardi, S. Pezzelle, M. Baroni, G. Boleda, and R. Fernández.
+The lambada dataset: Word prediction requiring a broad discourse context. arXiv preprint arXiv:1606.06031, 2016.
+G. Penedo, H. Kydlíček, A. Lozhkov, M. Mitchell, C. Raffel, L. Von Werra, T. Wolf, et al. The FineWeb Datasets:
+Decanting the Web for the Finest Text Data at Scale. In The Thirty-eight Conference on Neural Information
+Processing Systems; Datasets and Benchmarks Track, 2024.
+J. Peng, X. Zhuang, J. Qiu, R. Ma, J. Yu, H. Zhu, and C. He. Topic over source: The key to effective data mixing for
+language models pre-training, 2025. URL https://arxiv.org/abs/2502.16802.
+H. Que, J. Liu, G. Zhang, C. Zhang, X. Qu, Y. Ma, F. Duan, Z. Bai, J. Wang, Y. Zhang, X. Tan, J. Fu, W. Su,
+J. Wang, L. Qu, and B. Zheng. D-cpt law: Domain-specific continual pre-training scaling law for large language
+models, 2024. URL https://arxiv.org/abs/2406.01375.
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu,
+J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang,
+Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang,
+and Z. Qiu. Qwen2.5 technical report, 2024. URL https://arxiv.org/abs/2412.15115.
+P. Rajpurkar, J. Zhang, K. Lopyrev, and P. Liang. SQuAD: 100,000+ questions for machine comprehension of text.
+In J. Su, K. Duh, and X. Carreras, editors, Proceedings of the 2016 Conference on Empirical Methods in Natural
+Language Processing, pages 2383–2392, Austin, Texas, Nov. 2016. Association for Computational Linguistics. doi:
+10.18653/v1/D16-1264. URL https://aclanthology.org/D16-1264.
+S. Reddy, D. Chen, and C. D. Manning.
+CoQA: A conversational question answering challenge.
+Transactions
+of the Association for Computational Linguistics, 7:249–266, 2019. doi: 10.1162/tacl_a_00266. URL https:
+//aclanthology.org/Q19-1016.
+K. Sakaguchi, R. Le Bras, C. Bhagavatula, and Y. Choi. WinoGrande: An adversarial winograd schema challenge at
+scale. Proceedings of the AAAI Conference on Artificial Intelligence, 34(05):8732–8740, Apr. 2020. doi: 10.1609/
+aaai.v34i05.6399. URL https://ojs.aaai.org/index.php/AAAI/article/view/6399.
+M. Sap, H. Rashkin, D. Chen, R. Le Bras, and Y. Choi. Social IQa: Commonsense reasoning about social interactions.
+In K. Inui, J. Jiang, V. Ng, and X. Wan, editors, Proceedings of the 2019 Conference on Empirical Methods in
+Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLPIJCNLP), pages 4463–4473, Hong Kong, China, Nov. 2019. Association for Computational Linguistics.
+doi:
+10.18653/v1/D19-1454. URL https://aclanthology.org/D19-1454.
+27
+
+Y. Shi, G. Ke, D. Soukhavong, J. Lamb, Q. Meng, T. Finley, T. Wang, W. Chen, W. Ma, Q. Ye, T.-Y. Liu, N. Titov, and
+D. Cortes. LightGBM: Light Gradient Boosting Machine, 2025. URL https://github.com/Microsoft/LightGBM.
+R package version 4.6.0.99.
+L. Soldaini and K. Lo. peS2o (Pretraining Efficiently on S2ORC) Dataset, 2023. URL https://github.com/allenai/
+pes2o.
+L. Soldaini, R. Kinney, A. Bhagia, D. Schwenk, D. Atkinson, R. Authur, B. Bogin, K. Chandu, J. Dumas, Y. Elazar,
+V. Hofmann, A. H. Jha, S. Kumar, L. Lucy, X. Lyu, N. Lambert, I. Magnusson, J. Morrison, N. Muennighoff,
+A. Naik, C. Nam, M. E. Peters, A. Ravichander, K. Richardson, Z. Shen, E. Strubell, N. Subramani, O. Tafjord,
+P. Walsh, L. Zettlemoyer, N. A. Smith, H. Hajishirzi, I. Beltagy, D. Groeneveld, J. Dodge, and K. Lo. Dolma: an
+open corpus of three trillion tokens for language model pretraining research, 2024.
+A. Talmor, J. Herzig, N. Lourie, and J. Berant.
+CommonsenseQA: A question answering challenge targeting
+commonsense knowledge. In J. Burstein, C. Doran, and T. Solorio, editors, Proceedings of the 2019 Conference of the
+North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume
+1 (Long and Short Papers), pages 4149–4158, Minneapolis, Minnesota, June 2019. Association for Computational
+Linguistics. doi: 10.18653/v1/N19-1421. URL https://aclanthology.org/N19-1421.
+K. Team, Y. Bai, Y. Bao, G. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, J. Cui, H. Ding,
+M. Dong, A. Du, C. Du, D. Du, Y. Du, Y. Fan, Y. Feng, K. Fu, B. Gao, H. Gao, P. Gao, T. Gao, X. Gu, L. Guan,
+H. Guo, J. Guo, H. Hu, X. Hao, T. He, W. He, W. He, C. Hong, Y. Hu, Z. Hu, W. Huang, Z. Huang, Z. Huang,
+T. Jiang, Z. Jiang, X. Jin, Y. Kang, G. Lai, C. Li, F. Li, H. Li, M. Li, W. Li, Y. Li, Y. Li, Z. Li, Z. Li, H. Lin,
+X. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, J. Liu, J. Liu, L. Liu, S. Liu, T. Y. Liu, T. Liu, W. Liu, Y. Liu, Y. Liu,
+Y. Liu, Y. Liu, Z. Liu, E. Lu, L. Lu, S. Ma, X. Ma, Y. Ma, S. Mao, J. Mei, X. Men, Y. Miao, S. Pan, Y. Peng,
+R. Qin, B. Qu, Z. Shang, L. Shi, S. Shi, F. Song, J. Su, Z. Su, X. Sun, F. Sung, H. Tang, J. Tao, Q. Teng, C. Wang,
+D. Wang, F. Wang, H. Wang, J. Wang, J. Wang, J. Wang, S. Wang, S. Wang, Y. Wang, Y. Wang, Y. Wang,
+Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, Q. Wei, W. Wu, X. Wu, Y. Wu, C. Xiao, X. Xie, W. Xiong,
+B. Xu, J. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, Y. Xu, Z. Xu, J. Yan, Y. Yan, X. Yang, Y. Yang,
+Z. Yang, Z. Yang, Z. Yang, H. Yao, X. Yao, W. Ye, Z. Ye, B. Yin, L. Yu, E. Yuan, H. Yuan, M. Yuan, H. Zhan,
+D. Zhang, H. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang,
+H. Zhao, Y. Zhao, H. Zheng, S. Zheng, J. Zhou, X. Zhou, Z. Zhou, Z. Zhu, W. Zhuang, and X. Zu. Kimi k2: Open
+agentic intelligence, 2025. URL https://arxiv.org/abs/2507.20534.
+J. Welbl, N. F. Liu, and M. Gardner. Crowdsourcing multiple choice science questions. In L. Derczynski, W. Xu,
+A. Ritter, and T. Baldwin, editors, Proceedings of the 3rd Workshop on Noisy User-generated Text, pages 94–106,
+Copenhagen, Denmark, Sept. 2017. Association for Computational Linguistics. doi: 10.18653/v1/W17-4413. URL
+https://aclanthology.org/W17-4413/.
+A. Wettig, K. Lo, S. Min, H. Hajishirzi, D. Chen, and L. Soldaini. Organize the web: Constructing domains enhances
+pre-training data curation, 2025. URL https://arxiv.org/abs/2502.10341.
+S. M. Xie, H. Pham, X. Dong, N. Du, H. Liu, Y. Lu, P. Liang, Q. V. Le, T. Ma, and A. W. Yu. Doremi: Optimizing
+data mixtures speeds up language model pretraining, 2023. URL https://arxiv.org/abs/2305.10429.
+W. Xie, F. Tonin, and V. Cevher. Chameleon: A flexible data-mixing framework for language model pretraining and
+finetuning, 2025. URL https://arxiv.org/abs/2505.24844.
+J. Ye, P. Liu, T. Sun, J. Zhan, Y. Zhou, and X. Qiu. Data mixing laws: Optimizing data mixtures by predicting
+language modeling performance, 2025. URL https://arxiv.org/abs/2403.16952.
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi. HellaSwag: Can a machine really finish your sentence? In
+A. Korhonen, D. Traum, and L. Màrquez, editors, Proceedings of the 57th Annual Meeting of the Association for
+Computational Linguistics, pages 4791–4800, Florence, Italy, July 2019. Association for Computational Linguistics.
+doi: 10.18653/v1/P19-1472. URL https://aclanthology.org/P19-1472.
+28
+
+A
+Offline Schema Study Details
+All experiments for the design choice study, unless specified, use the same configuration as OlmixBase. For
+mixing over the DCLM topics, we constructed a sparse swarm of size K = 128. We also mix at the source level
+over DCLM, Stack-Edu, ArXiv, FineMath 3+, olmOCR Science PDFs, Wikipedia, and Pes2o (see Table 8).
+For the sources, we constructed a dense swarm of size K = 64. We use log-linear regression per task, an exact
+solver with λ = 0.05, and enforced repetition constraints in the optimization problem with R = 6T and k = 4.
+A.1
+RQ1: Proxy model size
+Details. Table 6 contains details about the architectures of the 1M, 15M, 30M, and 60M proxy models we
+train.
+Table 6 Proxy Model Architecture Configurations.
+Parameter
+1M
+15M
+30M
+60M
+Vocab size
+100,352
+100,352
+100,352
+100,352
+n_layers
+4
+8
+4
+8
+n_heads
+4
+4
+8
+8
+d_model
+16
+128
+256
+384
+head_dim
+4
+32
+32
+48
+A.2
+RQ2: Swarm size
+Additional results. In Figure 18, we vary K = c(m + 1) for c = 1, 2, 3, 4 and m = 6, 24 and study its effect on
+downstream BPB of 1B models. Despite having fewer m, the error curves when scaled according to c collapse
+together, suggesting that the O(m) sample complexity holds at both 30M and 1B model scales.
+Details. For the results in Figure 4 and Figure 18, we constructed proposed mixes using a search-based
+solver rather than an exact solver. We also did not enforce repetition constraints and had originally included
+5 additional metrics in our evaluation suite: Qasper Yes/No, Sciriff Yes/No, LabBench DBQA, LabBench
+ProtocolQA, and MedQA EN.
+For m = 24, we used all WebOrganizer DCLM topics. For m < 24, we selected the m largest domains. In
+particular, for m = 18, we used: Art and Design, Crime and Law, Education and Jobs, Electronics and
+Hardware, Entertainment, Finance and Business, Games, Health, Literature, Politics, Religion, Science Math
+and Technology, Social Life, Software, Software Development, Sports and Fitness, Transportation, Travel
+and Tourism. For m = 12, we used: Crime and Law, Education and Jobs, Entertainment, Finance and
+Business, Games, Health, Literature, Politics, Religion, Science Math and Technology, Software, and Software
+Development. For m = 6, we used: Entertainment, Finance and Business, Games, Health, Politics, and
+Science Math and Technology.
+A.3
+RQ3: Swarm distribution
+Details. To construct the sparse and dense swarms, we first generated mixes sampled from a Dirichlet
+distribution. For the dense swarm, we discarded any mixes that have domains with 0 weight, and for the
+sparse swarm, we enforced that if the weight of a domain is less than 0.05, then it is clipped to 0. The entire
+mixture is normalized afterwards.
+For the centering experiments, we compared a swarm with a natural Dirichlet prior to a strong and weak
+prior. The strong prior was the proposed mix obtained using the natural swarm. The weak prior was a mix
+that aimed to maximize BPB using the the natural swarm using a simulation-based solver. Regardless of the
+choice of Dirichlet prior, we used the natural distribution in the KL regularization term of the objective for
+fair comparison.
+29
+
+m + 1
+2(m + 1)
+3(m + 1)
+4(m + 1)
+Swarm Size
+0.01
+0.00
+0.01
+0.02
+0.03
+0.04
+ Error (BPB - min BPB per m)
+Number of domains
+m=6
+m=24
+Figure 18 Error on 1B models versus swarm size. Similar to Figure 4, we see that the error curves collapse across both
+m, supporting our finding that K needs O(m) runs to obtain strong downstream performance. Results are averaged
+across 3 random seeds, and the intervals indicate min and max results.
+10
+20
+30
+40
+50
+Swarm Size
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Regression Fit
+Regression Model
+LightGBM
+Autoscale
+Gaussian Process
+BiMix
+Log-Linear
+Search
+Natural
+LightGBM
+Autoscale
+GP
+BiMix
+Log-Linear
+0.65
+0.66
+0.67
+0.68
+0.69
+0.70
+0.71
+0.72
+ Average Downstream Task BPB
+0.7109
+0.6728
+0.6651 0.6637 0.6624 0.6609 0.6608
+Figure 19 Left: Regression fit versus swarm size across regression models when mixing across sources. Results are
+averaged across 3 random seeds, and the intervals indicate min and max results. Right: downstream performance of
+regression models over sources.
+For both sets of experiments, we constructed a held-out test set containing of 30 samples, where 15 were
+from a Dirichlet distribution centered around the sparse swarm’s optimal mix and 15 were from a Dirichlet
+distribution centered around the dense swarm’s optimal mix. This measures regression fit in high-performance
+regions of the mixture space, which matters in the mixture optimization step.
+A.4
+RQ4: Regression model family
+Additional results. Figure 19 compares the downstream performance and regression fit (measured on three
+random train-test splits of the swarm, each with 10 test mixes) across several regression model families at the
+source level. Across both metrics, we see that the log-linear regression model outperforms other approaches.
+In Figure 20, we plot the relationship between swarm size, number of domains, and regression fit across all
+regression model families over DCLM topics. These figures reveal that different regression model families have
+different sample complexity and regimes in which they do well. This offers a potential explanation for why
+existing methods lack consensus.
+Details. We describe how we adapt the regression models from BiMix (Ge et al., 2025b), Autoscale (Kang
+30
+
+0.2
+0.0
+0.2
+0.4
+0.6
+0.8
+6 domains
+12 domains
+20
+40
+60
+80
+100
+0.2
+0.0
+0.2
+0.4
+0.6
+0.8
+18 domains
+20
+40
+60
+80
+100
+24 domains
+Swarm Size
+Regression Fit
+LightGBM
+Autoscale
+Gaussian Process
+BiMix
+Log-Linear
+Figure 20 Regression fit versus swarm size and number of domains across regression models when mixing on DCLM
+topics. Across m = 6, 12, 18, 24 domains, each regression model requires different swarm sizes to obtain good regression
+fit. Results are averaged across 3 random seeds, and the intervals indicate min and max results.
+31
+
+et al., 2025), and Data Mixing Laws (Ye et al., 2025) to our setting where performance is measured on a set
+of downstream tasks.
+• BiMix: The BiMix mixing law models the validation loss on domain i as a function of the mixture ratio on
+domain i and the number of training steps s:
+ˆ
+fi(p, s) = Ai
+p
+αi
+i
+( Bi
+sβi + Ci) ∀i ∈[m].
+(3)
+Since we do not model the number of steps and instead directly transfer the proposed mix from the proxy
+scale to the target scale, this mixing law simplifies to ˆ
+fi(p) = Aip
+−αi
+i
+, where the constants are absorbed
+into Ai. To extend this mixing law to downstream tasks rather than validation loss on training domains,
+we assume that task BPB can be modeled as a weighted average of training domain-specific mixing laws.
+Therefore, for each downstream task i, the BiMix mixing law for our setting is:
+ˆ
+fi(p) =
+m
+∑
+j=1
+Aijp
+−αij
+j
+.
+(4)
+• AutoScale: The AutoScale mixing law models validation loss on a held-out dataset i as a function of the
+mixture and the number of tokens R:
+ˆ
+f(p, R) =
+m
+∑
+j=1
+((N
+j
+0 + pjR)−γj + lj),
+(5)
+where N
+j
+0 is the “effective” number of tokens of all other domains excluding j. The original paper fits
+separate parameters for each domain using perturbed runs; we instead fit all parameters jointly using our
+larger swarm. We make two modifications. First, we replace the per-domain constants lj with a single
+constant term ci corresponding to a given task i. Second, instead of directly learning N
+j
+0, which can be
+quite large given the order of magnitude of R, we rewrite N
+j
+0 + pjR as R(Aij + pj) and learn Aij. Therefore,
+for each downstream task i, the AutoScale mixing law for our setting is:
+ˆ
+fi(p) = ci +
+m
+∑
+j=1
+(R(Aij + pj))−αij.
+(6)
+• Data Mixing Laws: The mixing law models the validation loss on domain i as:
+ˆ
+fi(p) = ci + ki exp (
+m
+∑
+j=1
+tijpj).
+(7)
+The paper also extends this to out-of-domain validation sets by expressing them as a linear combination of
+training domains, namely ˆ
+f(p) = ∑m
+i=1 si(ci+ki exp ( ∑m
+j=1 tijpj)). We use the first, simpler form (7) directly
+for downstream tasks, treating each task’s performance as a function of the mixture on training domains.
+Moreover, we observe that ki can be absorbed into the linear term; rewriting (7) as ci+exp(∑m
+j=1 tijpj+log ki)
+shows that ki acts as an intercept term. Since p sums up to 1, this intercept is redundant and can be
+dropped. Therefore, our final log-linear mixing law is
+ˆ
+fi(p) = ci + exp (
+m
+∑
+j=1
+Aijpj).
+(8)
+Next, we provide implementation details for each model:
+• Search: we select the swarm run that has the best average BPB and satisfies the data repetition constraints.
+• LightGBM: we use the hyperparameters from RegMix (Liu et al., 2025a). However, we did not use an
+evaluation set for early stopping, since we noticed that RegMix used the same set of mixes for early stopping
+and for reporting performance. We solve the optimization problem using search, as is done in RegMix.
+32
+
+Table 7 Downstream performance of BiMix and AutoScale regression models on DCLM topics using exact optimization,
+exact + KL regularization (λ = 0.05), and search. Based on these findings, we use an exact solver with Autoscale and
+a search-based solver for BiMix for the rest of our study.
+Method
+Exact (0.0)
+Exact + KL (0.05)
+Search
+BiMix
+0.776733
+0.790188
+0.768153
+Autoscale
+0.798084
+0.804814
+0.808775
+Per-Task
+Per-Family
+Aggregated
+1.68
+1.70
+1.72
+1.74
+ Average Downstream Task BPB
+1.702
+1.722
+1.725
+Figure 21 30M performance across regression granularities. The performance is monotonic in the task granularity,
+matching with the regression fit findings from Table 3.
+• Gaussian Process: we use scikit-learn’s GaussianProcessRegressor. We solve the optimization problem using
+search, as is done in Chen et al. (2025b).
+• BiMix: we use SciPy least squares to fit the regression models. We solve the optimization problem using
+search, an exact solver, and exact solver with KL regularization (λ = 0.05) in Table 7. Based on the results,
+we decided to use a search-based solver when evaluating BiMix.
+• AutoScale: we use SciPy least squares to fit the regression models. We solve the optimization problem
+using search, an exact solver, and exact solver with KL regularization (λ = 0.05)in Table 7. Based on the
+results, we decide to use an exact solver when evaluating Autoscale.
+• Log-linear: we use the fitting code from Ye et al. (2025). We solve the optimization problem using CVXPY,
+while results for other solvers are discussed in §3.3.4.
+A.5
+RQ5: Regression granularity
+Additional results. Figure 21 shows the performance of various regression granularities at the 30M scale.
+While the downstream BPB results at the 1B scale (Table 3) demonstrates that per-family performs the worst,
+the 30M performance results are in line with the regression fits of each granularity; per-task performs the
+best, followed by per-family and aggregated.
+Details. The task families we used are defined in Table 9: Math, Code, and QA. We constructed a held-out
+test set containing of 45 samples, consisting of 15 samples from a Dirichlet distribution centered around each
+regression granularity’s respective proposed mix. This measures regression fit in high-performance regions of
+the mixture space, which matters in the mixture optimization step.
+A.6
+RQ6: Data repetition constraints
+Additional results. Figure 22 is the full version of Figure 7, showing the weights over all 24 DCLM topics
+when we vary the repetition factor k.
+33
+
+0.0
+0.1
+0.2
+0.3
+Mixture Weight
+travel_and_tourism
+transportation
+sports_and_fitness
+software_development
+software
+social_life
+science_math_and_technology
+religion
+politics
+literature
+industrial
+home_and_hobbies
+history_and_geography
+health
+games
+food_and_dining
+finance_and_business
+fashion_and_beauty
+entertainment
+electronics_and_hardware
+education_and_jobs
+crime_and_law
+art_and_design
+adult_content
+Repetition Factor
+k = 2.0
+k = 3.0
+k = 4.0
+k = 5.0
+k =
+Figure 22 Proposed mixture weights versus repetition factor (all domains), full version of Figure 7.
+34
+
+Exact
+Exact + KL (0.01)
+Exact + KL (0.05)
+Search
+0.658
+0.660
+0.662
+0.664
+0.666
+ Average Downstream Task BPB
+0.6612
+0.6634
+0.6608
+0.6620
+0.6612
+0.6634
+0.6608
+0.6620
+Exact
+Exact + KL (0.01)
+Exact + KL (0.05)
+Search
+1.476
+1.477
+1.478
+1.479
+ Average Predicted 30M Task BPB
+1.4766
+1.4770
+1.4775
+1.4782
+Figure 23 Performance (left) and regression fit (right) across optimization solvers when mixing across sources. The
+predicted performances of various solvers confirms that the exact solver minimizes the predicted BPB, as expected,
+followed by KL penalties of 0.01 and 0.05. However, the exact solver does not obtain the best downstream performance,
+and instead some KL regularization helps.
+Details. To construct the constrained swarm, we used K = 128 proxy runs. We set R = 6T requested tokens
+and a repetition factor of k = 4. The constrained swarm is constructed via rejection sampling from the
+Dirichlet prior. For constrained optimization, we specified the repetition constraint in CVXPY.
+A.7
+RQ7: Optimization solver
+Additional results. Figure 23 shows the performance and predicted performance across optimization solvers
+when mixing at the source level. Similar to Figure 8, we see that Exact + KL (0.05) outperforms the other
+solvers in terms of downstream BPB. We also sanity check our optimizers by examining predicted performance,
+confirming that the exact optimizer obtains the lowest predicted performance while adding a KL term degrades
+performance.
+Details. For the search approach, we used the adaptive search proposed in Wettig et al. (2025), which proceeds
+in multiple rounds such that the best mix from the current round is used as a Dirichlet prior to generate
+candidate mixes for the next round.
+35
+
+B
+Additional Mixture Reuse Details
+B.1
+Examples
+Suppose our initial D contains m = 3 domains with mixture ˜
+p = [0.25, 0.25, 0.5]. We provide examples of
+mixture reuse for each domain update operator.
+Remove. We remove the first domain of ˜
+p. Instead of recomputing a mix over the two remaining domains, we
+reuse their relative ratios [0.25, 0.5], automatically producing the mix q = [0.33, 0.67] without any additional
+recomputation.
+Partition. We partition the first domain into 2 additional domains, making the total number of domains
+m′ = 4. Instead of recomputing over all 4 domains, we learn a mix over a virtual domain consisting of the 2
+unaffected domains, for which ˜
+pDfix = [0.33, 0.67], and the 2 new domains formed from the partition. This
+means we only recompute over 3 domains. If this recomputed mix is r = [0.6, 0.1, 0.3], then the expanded mix
+is q = 0.6 ⋅[0.33, 0.67] ∪[0.1, 0.3] = [0.198, 0.402, 0.1, 0.3].
+Revise. Suppose the first domain is modified. Instead of recomputing over all 3 domains, we learn a mix over
+a virtual domain consisting of the 2 unaffected domains, for which ˜
+pDfix = [0.33, 0.67] and the revised domain.
+This means we only recompute over 2 domains. If the recomputed mix is r = [0.4, 0.6], then the expanded
+mix is q = 0.4 ⋅[0.33, 0.67] ∪[0.6] = [0.132, 0.268, 0.6].
+B.2
+Solving the Mixture Reuse Problem
+We explain how to write (2) as a standard mixing problem (without the explicit qDfix = ˜
+pDfix constraint) over
+a collapsed space.
+For any feasible q = [ρ˜
+pDfix, (1 −ρ)qDcomp], recall that the corresponding mix in collapsed space is r =
+[ρ, (1 −ρ)qDcomp] ∈△∣Dcomp∣. r is indexed over {v} ∪Dcomp, and Ψ˜
+pDfix (r) is an expansion function that
+maps from r back to q on D′.
+Lemma 1 (Reparametrized mixture reuse problem). The mixture reuse problem (2) is equivalent to the
+following optimization problem over the collapsed space:
+minimizer∈△∣Dcomp∣1
+n
+n
+∑
+i=1
+gi(r)
+(9)
+s.t.
+rv ≤min
+j∈Dfix {
+kN ′
+j
+R˜
+pj },
+rj ≤
+kN ′
+j
+R
+∀j ∈Dcomp
+where gi(r) ∶= fi(LM(S, R, Φ˜
+pDfix (r))).
+Proof. The constraint qDfix = ˜
+pDfix is absorbed by the change of variables, so any feasible q corresponds to
+a unique r. The repetition constraints in expanded space, ρ˜
+pj ≤
+kN ′
+j
+R
+for j ∈Dfix and (1 −ρ)qj ≤
+kN ′
+j
+R
+for
+j ∈Dcomp become ρ ≤
+kN ′
+j
+R˜
+pj for all j ∈Dfix and rj ≤
+kN ′
+j
+R
+for all j ∈Dcomp in collapsed space.
+36
+
+C
+Proofs for Section 4.3
+C.1
+Definitions and Notation
+Define performance of q as F(q) ∶=
+1
+n ∑n
+i=1 fi(LM(S, R, q)). We also write F(q) as a bivariate function,
+F(r, p1) ∶= F(Φp1(r)).
+Recall q⋆is the optimal solution to (1) on D′, and q⋆(˜
+pDfix) is solution returned by FullMixtureReuse
+when reusing ˜
+pDfix to solve (2). We define q⋆
+Dfix as the optimal mix on Dfix after the domain set update; that
+is, q⋆= [ρ⋆q⋆
+Dfix, (1 −ρ⋆)q⋆
+Dcomp]. We write q⋆(˜
+pDfix) = [ρ⋆(˜
+pDfix)˜
+pDfix, (1 −ρ⋆(˜
+pDfix))q⋆
+Dcomp(˜
+pDfix)].
+We can also write ˜
+p in terms of Dfix and D \ Dfix: any p can be expressed as p = [πpDfix, (1 −π)pD\Dfix],
+where π ∈[0, 1] (similar to ρ).
+The log-linear model is fi(q) = ci + ∑n
+i=1 exp(A⊤
+i q), where Aij intuitively captures a notion of how much
+domain j impacts task i. We split each Ai ∈Rm′
+into Ai,fix ∈R∣Dfix∣and Ai,comp ∈R∣Dcomp∣corresponding to
+Dfix and Dcomp. Define αfix, αcomp ∈Rn where αi,fix = ∥Ai,fix∥, αi,comp = ∥Ai,comp∥.
+Define the coupling term κ(Dfix, Dcomp) = κ(αfix, αcomp) as
+κ(αfix, αcomp) ∶= ∥(1 + αfix + αcomp) ⊙αfix∥,
+(10)
+where ⊙is the Hadamard product.
+Define ¯
+F(⋅) to be the objective without the constant term of the log-linear regression model, F(⋅) −1
+n ∑n
+i=1 ci.
+Denote p1 = ˜
+pDfix and p′
+1 = q⋆
+Dfix for simplicity. Let p2 = qDcomp. Recall that r⋆(p1) (and the expanded q⋆(p1))
+is the solution to (2) when qDfix is constrained to be p1. Any r can be written as r = [ρ, (1 −ρ), p2], so we
+similarly define ρ⋆(p1) and p⋆
+2(p1).
+C.2
+Proof for Theorem 1
+Assumption 1. We make the following assumptions:
+1. The log-linear model accurately captures the relationship between the mixture ratios and target model
+performance on each task; that is, fi(LM(S, R, q)) = ci + exp(A⊤
+i q) for some ci ∈R+, Ai ∈Rm′
+.
+2. Applying OlmixBase (Algorithm 1) exactly solves (1), and applying FullMixtureReuse exactly
+solves (2). That is, we ignore (i) proxy-to-target transfer error and (ii) estimation error in learning ci
+and Ai from the swarm. However, extending the analysis to include these errors is straightforward by
+adding corresponding approximation terms.
+3. We assume that F(r, p1) is µ-strongly convex in r.
+4. Let S(qDfix) be the feasible set of (2) defined by repetition constraints:
+rv ≤min
+j∈Dfix {
+kN ′
+j
+Rqj },
+rj ≤
+kN ′
+j
+R
+∀j ∈D′
+2,
+together with the simplex constraints on r.
+We assume mutual feasibility of ˜
+pDfix and q⋆
+Dfix: that
+r⋆(˜
+pDfix) ∈S(q⋆
+Dfix) and r⋆(q⋆
+Dfix) ∈S(˜
+pDfix). This holds in the following two cases:
+• Both ˜
+pDfix and q⋆
+Dfix have an active repetition constraint on at least one domain. Intuitively, this means
+that among the unaffected domains, there exist some high-utility domains that are data-constrained.
+• r⋆
+v(˜
+pDfix) ≤minj∈Dfix{
+kN ′
+j
+Rqj } and r⋆
+v(˜
+pDfix) ≤minj∈Dfix{
+kN ′
+j
+R˜
+pj }. Intuitively, the contents of the virtual
+domain are sufficiently low utility such that the proposed mix does not “push against” the tighter of the
+two rv constraints.
+37
+
+This assumption is reasonable in our setting: when the repetition constraint is active, a domain is
+valuable enough that we would allocate more weight if we could. When it is slack, the domain does
+not warrant allocating weight up to its availability limit. Our two cases simply rule out the marginal
+situation where one mix is availability-limited while the other is not.
+First, we show that the mixture reuse problem and the standard mixing problem are equivalent when the
+existing mix on the unaffected domains is equal to the optimal mix on the unaffected domains after the
+domain update. This is the “equality” condition of Theorem 1: when ˜
+pDfix = q⋆
+Dfix, the performance gap is 0.
+Lemma 2. The solution of (2), r⋆(˜
+pDfix), is equivalent to the solution of (1), q⋆= [ρ⋆q⋆
+Dfix, (1 −ρ⋆)q⋆
+D′
+2],
+when the existing mix satisfies ˜
+pDfix = q⋆
+Dfix.
+Proof. For (1), restricting the feasible set to the subspace qDfix = q⋆
+Dfix does not change the optimal value of
+this problem, since this subspace still contains the optimal solution to the original problem. Therefore, (1) is
+equivalent to:
+minimizeq∈△m′−1 1
+n
+m
+∑
+i=1
+fi(LM(S, R, q))
+s.t.
+qj ≤
+kN ′
+j
+R
+∀j ∈[m′]
+qDfix = q⋆
+Dfix
+Comparing this formulation of (1) to (2), we can see that the problems are equivalent when ˜
+pDfix = q⋆
+Dfix.
+Based on this result, we can write q⋆= q⋆(q⋆
+Dfix) = q⋆(p′
+1). Similarly, ρ⋆= ρ⋆(p′
+1), r⋆= r⋆(p′
+1), p⋆
+2 = p⋆
+2(p′
+1).
+Furthermore, the problem of bounding the performance gap now becomes one of bounding F(q⋆(˜
+pDfix)) −
+F(q⋆(q⋆
+Dfix)) in terms of ∥q⋆(˜
+pDfix) −q⋆
+Dfix∥. We can apply standard tools from optimization and convexity
+over F(r, p1) to address this.
+C.2.1
+Performance Gap Lemmas
+Lemma 3 (FOC Inequality). Recall that r⋆(p1) = arg minr∈S(p1) F(r, p1) and r⋆(p′
+1) = arg minr∈S(p′
+1) F(r, p′
+1).
+Then,
+⟨▽rF(r⋆(p1), p1) −▽rF(r⋆(p′
+1), p′
+1), r⋆(p′
+1) −r⋆(p1)⟩≥0.
+Proof. Since r⋆(p1) minimizes F(⋅, p1) over the convex set S(p1), we have the first-order condition
+⟨▽rF(r⋆(p1), p1), r −r⋆(p1)⟩≥0
+∀r ∈S(p1).
+Using the mutual feasibility assumption, r⋆(p′
+1) ∈S(p1), so plugging r = r⋆(p′
+1) yields
+⟨▽rF(r⋆(p1), p1), r⋆(p′
+1) −r⋆(p1)⟩≥0.
+Similarly, since r⋆(p′
+1) minimizes F(⋅, p′
+1) over S(p′
+1) and r⋆(p1) ∈S(p′
+1),
+⟨▽rF(r⋆(p′
+1), p′
+1), r⋆(p1) −r⋆(p′
+1)⟩≥0.
+Adding the two inequalities completes the proof.
+Lemma 4 (Mean value bound for ▽rF along a segment). Fix r and consider the map
+G(⋅) ∶= ▽rF(r, ⋅).
+38
+
+Assume G is continuously differentiable on the line segment
+pt
+1 ∶= tp′
+1 + (1 −t)p1,
+t ∈[0, 1].
+Then
+∥▽rF(r, p′
+1) −▽rF(r, p1)∥≤sup
+t∈[0,1]
+Â
+Â
+Â
+Â▽2
+r,p1F(r, pt
+1)Â
+Â
+Â
+Â ⋅∥p′
+1 −p1∥.
+Proof. Define the scalar function
+h(t) ∶= G(pt
+1),
+t ∈[0, 1].
+Since G is continuously differentiable on the segment, h is differentiable and
+h′(t) = ▽p1G(pt
+1) (p′
+1 −p1),
+where ▽p1G(pt
+1) denotes the Jacobian of G at pt
+1. By the fundamental theorem of calculus,
+G(p′
+1) −G(p1) = h(1) −h(0) = ∫
+1
+0
+h′(t) dt = ∫
+1
+0
+▽p1G(pt
+1) (p′
+1 −p1) dt.
+Taking norms and applying the triangle inequality,
+∥G(p′
+1) −G(p1)∥≤∫
+1
+0
+∥▽p1 G(pt
+1) (p′
+1 −p1)∥dt
+≤∫
+1
+0
+∥▽p1 G(pt
+1)∥∥p′
+1 −p1∥dt
+≤( sup
+t∈[0,1]
+∥▽p1 G(pt
+1)∥) ⋅∥p′
+1 −p1∥.
+Substituting G(⋅) = ▽rF(r, ⋅) completes the proof.
+Lemma 5 (Behavior of r⋆(⋅) under changes in p1). Let ∆∶= p′
+1 −p1 and ∆r ∶= r⋆(p′
+1) −r⋆(p1).
+Then
+∥∆r∥≤M
+µ ∥∆∥,
+where
+M ∶=
+sup
+t∈[0,1]
+Â
+Â
+Â
+Â▽2
+r,p1F(r⋆(p′
+1), pt
+1)Â
+Â
+Â
+Â ,
+pt
+1 ∶= tp′
+1 + (1 −t)p1.
+Proof. By µ-strong convexity of F(⋅, p1) in r, for r ∶= r⋆(p1) and r′ ∶= r⋆(p′
+1),
+F(r′, p1) ≥F(r, p1) + ⟨▽rF(r, p1), r′ −r⟩+ µ
+2 ∥r′ −r∥2,
+F(r, p1) ≥F(r′, p1) + ⟨▽rF(r′, p1), r −r′⟩+ µ
+2 ∥r −r′∥2.
+Adding yields
+µ∥∆r∥2 ≤⟨▽rF(r⋆(p′
+1), p1) −▽rF(r⋆(p1), p1), ∆r⟩.
+Next, we add and subtract ▽rF(r⋆(p′
+1), p′
+1):
+µ∥∆r∥2 ≤⟨▽rF(r⋆(p′
+1), p1) −▽rF(r⋆(p′
+1), p′
+1), ∆r⟩
++ ⟨▽rF(r⋆(p′
+1), p′
+1) −▽rF(r⋆(p1), p1), ∆r⟩.
+39
+
+By Lemma 3, the second inner product is less than 0. Thus
+µ∥∆r∥2 ≤∥▽rF(r⋆(p′
+1), p1) −▽rF(r⋆(p′
+1), p′
+1)∥⋅∥∆r∥.
+Finally, applying Lemma 4, we have
+µ∥∆r∥2 ≤sup
+t∈[0,1]
+Â
+Â
+Â
+Â▽2
+r,p1F(r⋆(p′
+1), pt
+1)Â
+Â
+Â
+Â ⋅∥∆∥⋅∥∆r∥
+We divide both sides by ∥∆r∥to complete the proof.
+Lemma 6 (Decomposing the performance gap). Define ∆∶= p′
+1 −p1, ∆r ∶= r⋆(p′
+1) −r⋆(p1). Then
+F(r⋆(p1), p1) −F(r⋆(p′
+1), p′
+1) ≤∥▽r F(r⋆(p1), p1)∥⋅∥∆r∥+ ∥∆∥⋅sup
+t∈[0,1]
+∥▽p1 F(r⋆(p′
+1), pt
+1)∥.
+Proof. Add and subtract F(r⋆(p′
+1), p1) from the LHS:
+F(r⋆(p1), p1) −F(r⋆(p′
+1), p′
+1) = (F(r⋆(p1), p1) −F(r⋆(p′
+1), p1)) + (F(r⋆(p′
+1), p1) −F(r⋆(p′
+1), p′
+1)).
+For the first difference, convexity of F(⋅, p1) implies
+F(r⋆(p′
+1), p1) ≥F(r⋆(p1), p1) + ⟨▽rF(r⋆(p1), p1), r⋆(p′
+1) −r⋆(p1)⟩,
+so
+F(r⋆(p1), p1) −F(r⋆(p′
+1), p1) ≤⟨▽rF(r⋆(p1), p1), r⋆(p1) −r⋆(p′
+1)⟩≤∥▽r F(r⋆(p1), p1)∥⋅∥∆r∥.
+For the second difference, we apply the mean value theorem along pt
+1:
+∣F(r⋆(p′
+1), p1) −F(r⋆(p′
+1), p′
+1)∣≤∥∆∥⋅sup
+t∈[0,1]
+∥▽p1 F(r⋆(p′
+1), pt
+1)∥.
+Combining the two bounds completes our proof.
+C.2.2
+Gradient Lemmas
+Lemma 7. The gradient norm ∥▽r F(r⋆(p1), p1)∥can be bounded by
+▽rF(r⋆(p1), p1) ≤¯
+F(q⋆(p1))∥∣A1p1∣+ αcomp∥.
+Proof. First, we write r as [ρ, b2], where b2 = (1 −ρ)p2. Define si = A⊤
+i,1ρp1 + A⊤
+i,2b2. We compute the
+gradient of F(r, p1) with respect to ρ and b2:
+▽ρF(r, p1) = 1
+n
+n
+∑
+i=1
+exp(si)A⊤
+i,1p1
+▽b2F(r, p1) = 1
+n
+n
+∑
+i=1
+exp(si)Ai,2
+We can consolidate this into a single expression if we define ai = [
+⟨Ai,1, p1⟩
+Ai,2 ] ∈R∣D′
+2∣+1:
+▽rF(r, p1) = 1
+n
+n
+∑
+i=1
+exp(si)ai.
+40
+
+Let us write r⋆(p1) as [ρ⋆(p1), (1 −ρ⋆(p1))p⋆
+2(p1)]. The expression for the gradient at r⋆(p1) is
+▽rF(r⋆(p1), p1) = 1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p1)p1 + A⊤
+i,2(1 −ρ⋆(p1))p⋆
+2(p1))ai.
+We now bound the norm. First, applying the Cauchy-Schwarz inequality twice, we have:
+∥▽r F(r⋆(p1), p1)∥≤1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p1)p1 + A⊤
+i,2(1 −ρ⋆(p1))p⋆
+2(p1))∥ai∥
+≤1
+n
+√
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρ⋆(p1)p1 + A⊤
+i,2(1 −ρ⋆(p1))p⋆
+2(p1)))
+√
+n
+∑
+i=1
+∥ai∥2
+≤1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p1)p1 + A⊤
+i,2(1 −ρ⋆(p1))p⋆
+2(p1))
+√
+n
+∑
+i=1
+∥ai∥2.
+Observe that the first summation is equivalent to ¯
+F(q⋆(p1)). Then, to bound the remaining term
+√
+∑n
+i=1 ∥ai∥2,
+we have
+√
+n
+∑
+i=1
+∥ai∥2 =
+√
+n
+∑
+i=1
+⟨Ai,1, p1⟩2 + ∥Ai,2∥2
+≤
+√
+n
+∑
+i=1
+(∣⟨Ai,1, p1⟩∣+ ∥Ai,2∥)2
+= ∥∣A1p1∣+ αcomp∥.
+where ∣⋅∣is an elementwise absolute value, and αcomp ∈Rn is constructed where αi,2 = ∥Ai,2∥.
+Therefore,
+▽rF(r⋆(p1), p1) ≤¯
+F(q⋆(p1))∥∣A1p1∣+ αcomp∥.
+Lemma 8. The gradient norm ▽p1F(r⋆(p′
+1), pt
+1) can be bounded by
+∥▽p1 F(r⋆(p′
+1), pt
+1)∥≤¯
+F(q⋆(p′
+1))∥exp(αfix∥△∥) ⊙αfix∥,
+where ⊙is the Hadamard product, and exp is elementwise.
+Proof. Define si = A⊤
+i,1ρp1 + A⊤
+i,2(1 −ρ)p2. We compute the gradient of F(r, p1) with respect to p1:
+▽p1F(r, p1) = 1
+n
+n
+∑
+i=1
+exp(si)ρAi,1.
+Let us write r⋆(p′
+1) as [ρ⋆(p′
+1), (1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)]. Then, the gradient of F(r, p1) at r⋆(p′
+1), pt
+1 is
+▽p1F(r⋆(p′
+1), pt
+1) = 1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p′
+1)pt
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1))ρ⋆(p′
+1)Ai,1.
+We now bound the norm of the gradient over t ∈[0, 1]. First, we add and subtract p′
+1 to create an exp term
+defined over p′
+1 and a difference term with pt
+1 −p′
+1:
+∥▽p1 F(r⋆(p′
+1), pt
+1)∥≤1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p′
+1)(p′
+1 + pt
+1 −p′
+1) + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1))ρ⋆(p′
+1)∥Ai,1∥
+≤1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)) exp(A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))∥Ai,1∥.
+41
+
+Then, we apply Cauchy-Schwarz inequality to get
+∥▽p1 F(r⋆(p′
+1), pt
+1)∥
+≤1
+n
+√
+n
+∑
+i=1
+exp(2A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))∥Ai,1∥2
+√
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)))
+≤1
+n
+√
+n
+∑
+i=1
+exp(2A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))∥Ai,1∥2 ⋅
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)).
+We observe that we can replace the second summation with ¯
+F(q⋆(p′
+1)), so we only need to further simplify
+√
+∑n
+i=1 exp(2A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))∥Ai,1∥2. We observe that ∥pt
+1 −p′
+1∥is always bounded by ∥∆∥, and use
+the fact that ρ⋆(p′
+1) ≤1:
+√
+n
+∑
+i=1
+exp(2A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))∥Ai,1∥2 ≤
+√
+n
+∑
+i=1
+exp(2∥Ai,1∥∥pt
+1 −p′
+1∥)∥Ai,1∥2
+≤
+√
+n
+∑
+i=1
+exp(2∥Ai,1∥∥△∥)∥Ai,1∥2 ≤∥exp(αfix∥△∥) ⊙αfix∥.
+Therefore,
+∥▽p1 F(r⋆(p′
+1), pt
+1)∥≤¯
+F(q⋆(p′
+1))∥exp(αfix∥△∥) ⊙αfix∥.
+Lemma 9. Let amax = maxi{∥Ai,1∥}, the largest norm of Ai,1 across all tasks. Define bmax ∈Rn where
+bi,max = max{∣⟨Ai,1, p1⟩∣, ∣⟨Ai,1, p′
+1⟩∣} as the larger of the two dot products per task. The gradient norm
+∥▽2
+r,p1 F(r⋆(p′
+1), pt
+1)∥can be bounded by
+∥▽2
+r,p1 F(r⋆(p′
+1), pt
+1)∥≤exp(amax∥∆∥) ⋅¯
+F(q⋆(p′
+1)) ⋅∥(1 + bmax + αcomp) ⊙αfix∥,
+where ⊙is the Hadamard product.
+Proof. We derive an expression for ▽2
+r,p1F(r, p1). We write r as [ρ, b2], where b2 ∶= (1 −ρ)p2, and define
+si = A⊤
+i,1ρp1 + A⊤
+i,2b2 to be the expression inside the exp. First, we have that ▽p1F(r, p1) is
+▽p1F(r, p1) = 1
+n
+n
+∑
+i=1
+exp(si)ρAi,1.
+Then, we can compute ▽ρ,p1F(r, p1) and ▽b2,p1F(r, p1):
+▽ρ,p1F(r, p1) = ▽ρ( 1
+n
+n
+∑
+i=1
+exp(si)ρAi,1) = 1
+n
+n
+∑
+i=1
+(ρ exp(si)⟨Ai,1, p1⟩+ exp(si))A⊤
+i,1
+▽b2,p1F(r, p1) = ▽b2( 1
+n
+n
+∑
+i=1
+exp(si)ρAi,1) = 1
+n
+n
+∑
+i=1
+ρ exp(si)Ai,2A⊤
+i,1
+We can consolidate these into
+▽2
+r,p1F(r, p1) = 1
+n
+n
+∑
+i=1
+exp(si)(ρai + e1)A⊤
+i,1,
+42
+
+where ai = [
+⟨Ai,1, p1⟩
+Ai,2 ] ∈R∣D′
+2∣+1 and e1 is the standard basis vector [
+1
+0
+⋮
+0
+] ∈R∣D′
+2∣+1. Therefore, the gradient
+▽2
+r,p1F(r, p1) at r⋆(p′
+1), pt
+1 is
+▽2
+r,p1F(r⋆(p′
+1), pt
+1) = 1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p′
+1)pt
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1))(ρ⋆(p′
+1)ai + e1)A⊤
+i,1,
+where ai is now [
+⟨Ai,1, pt
+1⟩
+Ai,2 ]. Now, we would like to upper bound supt∈[0,1] ∥▽2
+r,p1 F(r⋆(p′
+1), pt
+1)∥. Using
+Cauchy-Schwarz inequality, we have
+∥▽2
+r,p1 F(r⋆(p′
+1), pt
+1)∥≤1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p′
+1)pt
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1))∥(ρ⋆(p′
+1)ai + e1)A⊤
+i,1∥
+≤1
+n
+√
+n
+∑
+i=1
+exp (2(A⊤
+i,1ρ⋆(p′
+1)pt
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)))
+√
+n
+∑
+i=1
+∥(ρ⋆(p′
+1)ai + e1)A⊤
+i,1∥2.
+(11)
+We simplify the first summation in (11) by adding and subtracting p′
+1 to pt
+1:
+n
+∑
+i=1
+exp (2(A⊤
+i,1ρ⋆(p′
+1)pt
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)))
+=
+n
+∑
+i=1
+exp (2A⊤
+i,1ρ⋆(p′
+1)(p′
+1 + pt
+1 −p′
+1) + 2A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1))
+=
+n
+∑
+i=1
+exp (2(A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)) + 2A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))
+≤max
+i {exp(2A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))}(
+n
+∑
+i=1
+exp (A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)))
+2
+.
+We note that ∑n
+i=1 exp (A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)) is n ⋅¯
+F(q⋆(p′
+1)). Moreover, using the fact that
+ρ⋆(p′
+1) ≤1 and ∥pt
+1 −p′
+1∥≤∥∆∥, we can bound maxi{exp(2A⊤
+i,1ρ⋆(p′
+1)(pt
+1 −p′
+1))} ≤maxi{exp(2∥Ai,1∥∥pt
+1 −
+p′
+1∥)} ≤exp(2∥∆∥maxi{∥Ai,1∥}). Let amax = maxi{∥Ai,1∥}, the largest norm of Ai,1 across all tasks.
+Therefore, we have:
+1
+n
+√
+n
+∑
+i=1
+exp (2(A⊤
+i,1ρ⋆(p′
+1)pt
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1))) ≤1
+n
+√
+exp(2amax∥∆∥) ⋅n2 ⋅F(q⋆(p′
+1))2
+= exp(amax∥∆∥) ⋅F(q⋆(p′
+1)).
+Next, we simplify the second summation in (11), ∑n
+i=1 ∥(ρ⋆(p′
+1)ai+e1)A⊤
+i,1∥2, using Cauchy-Schwarz inequality,
+the definition of the norm, and the fact that ρ⋆(p′
+1) ≤1:
+n
+∑
+i=1
+∥(ρ⋆(p′
+1)ai + e1)A⊤
+i,1∥2 ≤
+n
+∑
+i=1
+∥ρ⋆(p′
+1)ai + e1∥2∥Ai,1∥2
+=
+n
+∑
+i=1
+((1 + ρ⋆(p′
+1)⟨Ai,1, pt
+1⟩)2 + ρ⋆(p′
+1)2∥Ai,2∥2)∥Ai,1∥2
+≤
+n
+∑
+i=1
+((1 + ρ⋆(p′
+1)⟨Ai,1, pt
+1⟩)2 + ∥Ai,2∥2)∥Ai,1∥2.
+43
+
+Note that ⟨Ai,1, pt
+1⟩is bound by ⟨Ai,1, p′
+1⟩and ⟨Ai,1, p1⟩. Therefore, it holds that (1 + ρ⋆(p′
+1)⟨Ai,1, pt
+1⟩)2 ≤
+(1 + max{∣⟨Ai,1, p1⟩∣, ∣⟨Ai,1, p′
+1⟩∣})2. We denote bi,max = max{∣⟨Ai,1, p1⟩∣, ∣⟨Ai,1, p′
+1⟩∣} as the larger of the
+two dot products per task, and then we can write:
+√
+n
+∑
+i=1
+∥(ρ⋆(p′
+1)ai + e1)A⊤
+i,1∥2 ≤
+√
+n
+∑
+i=1
+((1 + bi,max)2 + ∥Ai,2∥2)∥Ai,1∥2
+≤
+√
+n
+∑
+i=1
+(1 + bi,max + ∥Ai,2∥)2∥Ai,1∥2
+= ∥(1 + bmax + αcomp) ⊙αfix∥.
+where addition is elementwise, ⊙is the Hadamard product, and αfix, αcomp ∈Rn are constructed where
+αi,1 = ∥Ai,1∥and αi,2 = ∥Ai,2∥. Putting everything together, our gradient norm bound in (11) becomes
+∥▽2
+r,p1 F(r⋆(p′
+1), pt
+1)∥≤exp(amax∥∆∥) ⋅¯
+F(q⋆(p′
+1)) ⋅∥(1 + bmax + αcomp) ⊙αfix∥.
+C.2.3
+Theorem 1 (Formal)
+Theorem 3. Define amax = maxi{∥Ai,1∥}. The performance gap between using q⋆and q⋆(˜
+pDfix) is bounded
+by:
+F(q⋆(˜
+pDfix)) −F(q⋆) ≤C∥˜
+pDfix −q⋆
+Dfix∥,
+where
+C = ¯
+F(q⋆) exp(amax∥˜
+pDfix −q⋆
+Dfix∥) (
+¯
+F(q⋆(˜
+pDfix))
+µ
+⋅∥αfix + αcomp∥⋅κ(αfix, αcomp) + ∥αfix∥) .
+Proof. Recall our simplified notation p1 = ˜
+pDfix, p′
+1 = q⋆
+Dfix. Applying Lemma 5 to Lemma 6, we can bound
+the performance gap to be linear in ∥p1 −p′
+1∥:
+F(r⋆(p1), p1) −F(r⋆(p′
+1), p′
+1) ≤C∥∆∥,
+where C is a term that consists of three gradient norms:
+C = 1
+µ sup
+t∈[0,1]
+(∥▽2
+r,p1 F(r⋆(p′
+1), pt
+1)∥) ∥▽r F(r⋆(p1), p1)∥+ sup
+t∈[0,1]
+∥▽p1 F(r⋆(p′
+1), pt
+1)∥,
+and pt
+1 = tp′
+1 + (1 −t)p1. We can apply the gradient norm bounds from Lemmas 7, 8, 9:
+C ≤1
+µ exp(amax∥∆∥) ⋅¯
+F(q⋆(p′
+1)) ⋅∥(1 + bmax + αcomp) ⊙αfix∥⋅¯
+F(q⋆(p1))∥∣A1p1∣+ αcomp∥
++ ¯
+F(q⋆(p′
+1))∥exp(αfix∥△∥) ⊙αfix∥.
+We simplify this bound a bit further. First, note that the elements of ∣A1p1∣are ∣⟨Ai,1, p1⟩∣≤∥Ai,1∥∥p1∥≤
+∥Ai,1∥. Therefore, ∣A1p1∣⪯αfix.
+Second, note that bi,max = max{∣⟨Ai,1, p1⟩∣, ∣⟨Ai,1, p′
+1⟩∣} ≤∥Ai,1∥, so bmax ⪯αfix as well.
+Lastly, ∥exp(αfix∥△∥) ⊙αfix∥can be bounded by exp(amax∥∆∥) ⋅∥αfix∥.
+44
+
+Then, we can bound C as
+C ≤¯
+F(q⋆) exp(amax∥∆∥) (
+¯
+F(q⋆(˜
+pDfix))
+µ
+∥(1 + αfix + αcomp) ⊙αfix∥⋅∥αfix + αcomp∥+ ∥αfix∥) .
+Replacing ∥(1 + αfix + αcomp) ⊙αfix∥with κ(αfix, αcomp) completes our proof.
+C.3
+Proof for Theorem 2
+When domains are being added and ˜
+p is the optimal mix on D, ˜
+p is equal to ˜
+pDfix and is the solution to the
+following optimization problem:
+minimizep∈△m−1 1
+n
+m
+∑
+i=1
+fi(LM(S, R, p))
+(12)
+s.t.
+pj ≤
+kNj
+R
+∀j ∈[m]
+Assumption 2. We make the following assumptions beyond Assumption 1.
+1. We assume that F(r, p1) is µ1-strongly convex in p1.
+2. Let S(r) be the feasible set of (1) defined by the repetition constraints on p1:
+pj ≤
+kNj
+Rρ ∀j ∈Dfix
+We assume mutual feasibility of ˜
+pDfix and q⋆
+Dfix: that ˜
+pDfix ∈S(r⋆), and q⋆
+Dfix ∈S(r0), where r0 = [1, 0]
+corresponds to the mix before new domains are added. That is, we assume that ˜
+pj ≤
+kNj
+Rρ⋆and q⋆
+j ≤
+kNj
+R
+for j ∈Dfix, meaning that the existing mix cannot have active repetition constraints.
+First, we present a general lemma that allows us to bound any ∥p1 −p′
+1∥.
+Lemma 10 (Argmin stability with mutual feasibility). Let S, S′ ⊂△∥D1∥−1 be convex sets. Let h ∶S →R be
+differentiable and µ1-strongly convex on S. Let h′ ∶S′ →R be a differentiable function. Define
+p1 = arg min
+p1∈S h(p1),
+p′
+1 = arg min
+p1∈S′ h′(p1)
+We assume mutual feasibility; that is, p1 ∈S′ and p′
+1 ∈S. Then,
+∥p1 −p′
+1∥≤1
+µ1 ∥▽h(p′
+1) −▽h′(p′
+1)∥.
+Proof. Applying our mutual feasibility assumption, the first order condition at p1 for h and p′
+1 for h yields
+⟨▽h(p1), p′
+1 −p1) ≥0
+⟨▽h′(p′
+1), p1 −p′
+1) ≥0
+Adding these together and adding and subtracting ▽h(p′
+1), we have
+⟨▽h(p1) −▽h′(p′
+1), p′
+1 −p1⟩≥0
+⇒⟨▽h(p1) −▽h(p′
+1) + ▽h(p′
+1) −▽h′(p′
+1), p′
+1 −p1⟩≥0
+⇒⟨▽h(p1) −▽h(p′
+1), p1 −p′
+1⟩≤⟨▽h(p′
+1) −▽h′(p′
+1), p′
+1 −p1⟩
+45
+
+Next, due to µ1 strong convexity of h, we have
+h(p1) ≥h(p′
+1) + ⟨▽h(p′
+1), p1 −p′
+1⟩+ µ1
+2 ∥p1 −p′
+1∥2
+h(p′
+1) ≥h(p1) + ⟨▽h(p1), p′
+1 −p1⟩+ µ1
+2 ∥p1 −p′
+1∥2
+Adding these together and applying the bound from the first order conditions, we get
+µ∥p1 −p′
+1∥2 ≤⟨▽h(p1) −▽h(p′
+1), p1 −p′
+1⟩
+≤⟨▽h(p′
+1) −▽h′(p′
+1), p′
+1 −p1⟩
+≤∥▽h(p′
+1) −▽h′(p′
+1)∥⋅∥p′
+1 −p1∥
+Dividing both sides by µ∥p′
+1 −p1∥completes our proof.
+Lemma 11 (When ˜
+pDfix = q⋆
+Dfix for adding). Consider the Add update, where D2 = ∅and D′ = [D1D′
+2] with
+D′
+2 ≠∅. Let ˜
+p ∈△m−1 be an optimal solution to the mixing problem on the pre-update domain set D = D1
+(equivalently, ˜
+pD1 = ˜
+p), and let q⋆be the optimal solution to the post-update mixing problem on D′. If ρ⋆= 1,
+then
+˜
+pDfix = q⋆
+Dfix.
+Proof. Since D2 = ∅, the pre-update problem over D = D1 is equivalent to the post-update problem restricted
+to mixtures that assign zero mass to all added domains:
+minimizeq∈△m′−1 1
+n
+n
+∑
+i=1
+fi(LM(S, R, q))
+s.t.
+qj ≤
+kN ′
+j
+R
+∀j ∈D1 ∪D′
+2
+qj = 0
+∀j ∈D′
+2.
+If ρ⋆= 1, then q⋆
+j = 0 for all j ∈D′
+2. This means that the additional constraints qj = 0 on the post-update
+problem do not change the optimal value, since the restricted feasible set still contains the optimal solution of
+q⋆
+j = 0. Therefore, if ρ⋆= 1, the restricted problem above and the unrestricted post-update problem have
+the same optimum, and their optimizers coincide on D1; in particular, q⋆
+D1 = ˜
+pD1. Replacing D1 with Dfix
+completes our proof.
+Lemma 12. Assume mutual feasibility between p1 and p′
+1. Then, when the domain update involves adding
+domains,
+∥p1 −p′
+1∥≤2(1 −ρ⋆)
+µ1
+∥sup
+t∈[0,1]
+∥▽2
+p1,r F(rt, p′
+1)∥
+rt = tr0 + (1 −t)r⋆
+Proof. Define r0 = [1, 0] where ρ0 = 1. Then, p1 = arg minp1∈S(r0) F(r0, p1). We can write p′
+1 similarly as
+p′
+1 = arg minp1∈S(r⋆) F(r⋆, p1).
+If we assume mutual feasibility and define h(p1) = F(r0, p1), h′(p1) = F(r⋆, p1), then applying Lemma 10
+gives us
+∥p1 −p′
+1∥≤1
+µ1 ∥▽p1 F(r0, p′
+1) −F(r⋆, p′
+1)∥.
+Define rt = tr0 + (1 −t)r⋆, where t ∈[0, 1]. By the fundamental theorem of calculus, it holds that
+▽p1F(r0, p′
+1) −▽p1F(r⋆, p′
+1) = ∫
+1
+0
+▽2
+p1,rF(rt, p′
+1)(r0 −r⋆)dt.
+46
+
+Therefore,
+∥p1 −p′
+1∥≤1
+µ1 ∥r0 −r⋆∥sup
+t∈[0,1]
+∥▽2
+p1,r F(rt, p′
+1)∥.
+Lastly, we bound ∥r0 −r⋆∥:
+∥r0 −r⋆∥= ∥[1, 0] −[ρ⋆, (1 −ρ⋆)q⋆
+D′
+2]∥= ∥(1 −ρ⋆)[1, −q⋆
+D′
+2]∥≤2(1 −ρ⋆).
+This completes our proof.
+Lemma 13. Define rt = tr0 + (1 −t)r⋆(p′
+1), where r0 = [1, 0]. The gradient norm ∥▽2
+r,p1 F(rt, p′
+1)∥can be
+bounded by
+∥▽2
+r,p1 F(rt, p′
+1)∥≤¯
+F(q⋆) exp(cmax(1 −ρ⋆))∥(1 + αfix + αcomp) ⊙αfix∥
+where cmax = maxi{∥Ai,1∥+ ∥Ai,2∥} and ⊙is the Hadamard product.
+Proof. First, we can write rt as
+rt = t[1, 0] + (1 −t)[ρ⋆(p′
+1), (1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)]
+= [t + (1 −t)ρ⋆(p′
+1), (1 −t)(1 −ρ⋆(p′
+1))p⋆
+2(p′
+1)]
+= [t + (1 −t)ρ⋆(p′
+1), (1 −(t + (1 −t)ρ⋆(p′
+1)))p⋆
+2(p′
+1)].
+Therefore, we can express rt = [ρt, (1 −ρt)pt
+2] where ρt ∶= t + (1 −t)ρ⋆(p′
+1), and pt
+2 = p⋆
+2(p′
+1).
+Applying Lemma 9, we can write the gradient as
+▽2
+r,p1F(rt, p′
+1) = 1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρtp′
+1 + A⊤
+i,2(1 −ρt)pt
+2)(ρtai + e1)A⊤
+i,1,
+where ai = [
+⟨Ai,1, p′
+1⟩
+Ai,2 ] ∈R∣D′
+2∣+1 and e1 is the standard basis vector [
+1
+0
+⋮
+0
+] ∈R∣D′
+2∣+1. Then, using Cauchy-Schwarz
+inequality, the gradient norm can be bounded as
+∥▽2
+r,p1 F(rt, p′
+1)∥≤1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρtp′
+1 + A⊤
+i,2(1 −ρt)pt
+2)∥(ρtai + e1)A⊤
+i,1∥
+(13)
+≤1
+n
+√
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρtp′
+1 + A⊤
+i,2(1 −ρt)pt
+2))
+√
+n
+∑
+i=1
+∥(ρtai + e1)A⊤
+i,1∥2.
+We bound the first summation of (13) by adding and subtracting ρ⋆(p′
+1):
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρtp′
+1 + A⊤
+i,2(1 −ρt)pt
+2))
+=
+n
+∑
+i=1
+exp(2(A⊤
+i,1(ρt + ρ⋆(p′
+1) −ρ⋆(p′
+1))p′
+1 + A⊤
+i,2((1 −ρt) + (1 −ρ⋆(p′
+1)) −(1 −ρ⋆(p′
+1)))pt
+2))
+=
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))pt
+2)) exp(2(A⊤
+i,1(ρt −ρ⋆(p′
+1))p′
+1 + A⊤
+i,2(ρ⋆(p′
+1) −ρt)p⋆
+2(p′
+1)))
+=
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))pt
+2)) exp(2t(1 −ρ⋆(p′
+1))(A⊤
+i,1p′
+1 −A⊤
+i,2p⋆
+2(p′
+1))).
+47
+
+We can then replace some terms in (13) with ¯
+F(r⋆(p′
+1), p′
+1)
+1
+n
+√
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρtp′
+1 + A⊤
+i,2(1 −ρt)pt
+2))
+≤1
+n
+n
+∑
+i=1
+exp(A⊤
+i,1ρ⋆(p′
+1)p′
+1 + A⊤
+i,2(1 −ρ⋆(p′
+1))pt
+2) ⋅max
+i {exp(t(1 −ρ⋆(p′
+1))(A⊤
+i,1p′
+1 −A⊤
+i,2p⋆
+2(p′
+1)))}
+= ¯
+F(r⋆(p′
+1), p′
+1) max
+i {exp(t(1 −ρ⋆(p′
+1))(A⊤
+i,1p′
+1 −A⊤
+i,2p⋆
+2(p′
+1)))}.
+We can bound A⊤
+i,1p′
+1−A⊤
+i,2p⋆
+2(p′
+1) ≤∥Ai,1∥+∥Ai,2∥using Cauchy-Schwarz. Let cmax = maxi{∥Ai,1∥+∥Ai,2∥}.
+Using the fact that t ∈[0, 1], the first part of (13) can be bounded by
+1
+n
+√
+n
+∑
+i=1
+exp(2(A⊤
+i,1ρtp′
+1 + A⊤
+i,2(1 −ρt)pt
+2)) ≤¯
+F(r⋆(p′
+1), p′
+1) exp(cmax(1 −ρ⋆(p′
+1))).
+The second summation of (13) can be bounded in the exact same way as the second summation of (11) in
+Lemma 9. Therefore, we have that
+√
+n
+∑
+i=1
+∥(ρtai + e1)A⊤
+i,1∥2 ≤∥(1 + αfix + αcomp) ⊙αfix∥.
+This completes our proof.
+C.3.1
+Theorem 2 (Formal)
+Theorem 4. Define ˜
+p is the solution to (1) on D and suppose that new domains are added. Let cmax =
+maxi{∥Ai,1∥+ ∥Ai,2∥}. Then, the difference between ˜
+pDfix and q⋆
+Dfix is bounded by
+∥˜
+pDfix −q⋆
+Dfix∥≤2 ¯
+F(q⋆) exp(cmax(1 −ρ⋆))
+µ1
+⋅κ(αfix, αcomp) ⋅(1 −ρ⋆).
+Proof. Applying Lemma 13 and Lemma 12, we have
+∥p1 −p′
+1∥≤2(1 −ρ⋆)
+µ1
+¯
+F(q⋆) exp(cmax(1 −ρ⋆))∥(1 + αfix + αcomp) ⊙αfix∥
+= 2 ¯
+F(q⋆) exp(cmax(1 −ρ⋆))
+µ1
+⋅κ(αfix, αcomp) ⋅(1 −ρ⋆).
+C.4
+Additional Theoretical Results
+C.4.1
+Removing domains
+Our results for are symmetric to the addition update, but we state the full derivation for completeness.
+Lemma 14 (When ˜
+pDfix = q⋆
+Dfix for removing). Consider the removing update, where D2 ≠∅and D′ = D1
+(equivalently, D′
+2 = ∅). Let ˜
+p ∈△m−1 be an optimal solution to the mixing problem on the pre-update domain
+set D = [D1, D2], and let q⋆be the optimal solution to the post-update mixing problem on D′ = D1 (equivalently,
+q⋆
+D1 = q⋆). If π⋆= 1, then
+˜
+pDfix = q⋆
+Dfix.
+48
+
+Proof. Since D′
+2 = ∅, the post-update problem over D′ = D1 is equivalent to the pre-update problem restricted
+to mixtures that assign zero mass to all removed domains:
+minimizep∈△m−1 1
+n
+n
+∑
+i=1
+fi(LM(S, R, p))
+s.t.
+pj ≤
+kNj
+R
+∀j ∈D1 ∪D2
+pj = 0
+∀j ∈D′
+2.
+If π⋆= 1, then ˜
+pj = 0 for all j ∈D2. This means that the additional constraints pj = 0 on the pre-update
+problem do not change the optimal value, since the restricted feasible set still contains the optimal solution
+of ˜
+pj = 0. Therefore, if π⋆= 1, the restricted problem above and the unrestricted pre-update problem have
+the same optimum, and their optimizers coincide on D1; in particular, q⋆
+D1 = ˜
+pD1. Replacing D1 with Dfix
+completes our proof.
+C.4.2
+Partitioning a domain
+Lemma 15 (When ˜
+pDfix = q⋆
+Dfix for partitioning). Consider the partitioning update operator, where D \ D1 =
+{D} consists of a single domain and D′
+2 = {D′
+1, . . . , D′
+ℓ} are subdomains with D = ⋃ℓ
+j=1 D′
+j.
+Define the natural distribution pnat ∈△ℓ−1 by
+[pnat]j =
+N ′
+j
+∑ℓ
+t=1 N ′
+t
+∀j ∈[ℓ].
+If q⋆
+D′
+2 = pnat, then
+˜
+pDfix = q⋆
+Dfix.
+Proof. Since D2 = {D} is a single domain, sampling (1 −π)R tokens from D induces a distribution over
+the subdomains {D′
+1, . . . , D′
+ℓ} that is proportional to token counts, i.e., pnat. Therefore, the pre-update
+optimization problem can be written as the post-update optimization problem restricted to mixtures that
+preserve this conditional distribution within the partition:
+minimizeq∈△m′−1 1
+n
+n
+∑
+i=1
+fi(LM(S, R, q))
+s.t.
+qj ≤
+kN ′
+j
+R
+∀j ∈D1 ∪D′
+2
+qD′
+2 = pnat,
+If q⋆
+D′
+2 = pnat, then q⋆lies in the restricted feasible set above. The additional constraint qD′
+2 = pnat does not
+change the optimal value of the post-update problem, since the restricted feasible set still contains the optimal
+solution. Therefore, the optimizer on the unrestricted post-update problem must coincide with the optimizer
+of the restricted problem on the unaffected domains, implying q⋆
+D1 = ˜
+pD1. Replacing D1 with Dfix completes
+our proof.
+C.4.3
+Revising a domain
+Lemma 16 (Exactness for revising). Consider the revising update operator, where D2 = {D} and D′
+2 = {D′}
+consists of a single domain whose contents are modified. Assume the log-linear model holds both pre- and
+post-update:
+F old(q) = 1
+n
+n
+∑
+i=1
+exp((Ai,1)⊤qDfix + (Aold
+i,2 )⊤qD2) ,
+F new(q) = 1
+n
+n
+∑
+i=1
+exp((Ai,1)⊤qDfix + (Anew
+i,2 )⊤qD2) ,
+49
+
+where D = [D1, D2] and D′ = [D1, D′
+2] have the same dimensionality, and the repetition constraints are
+unchanged.
+Let ˜
+p be an optimal solution to the pre-update mixing problem with objective F old, and let q⋆be an optimal
+solution to the post-update mixing problem with objective F new. If Anew
+i,2 = Aold
+i,2 for all i ∈[n], then ˜
+p = q⋆,
+and in particular ˜
+pDfix = q⋆
+Dfix.
+Proof. If Anew
+i,2
+= Aold
+i,2 for all i ∈[n], then F new(q) = F old(q) for all q. Since the feasible set (simplex and
+repetition constraints) is unchanged under revising, the pre-update and post-update optimization problems
+are identical. Therefore their optimizers coincide, so ˜
+p = q⋆.
+50
+
+D
+Experiment Details
+D.1
+Experimental Setup
+Domains. We provide a breakdown of the number of tokens per domain in Table 8.
+Model. We train 1B parameter decoder-only transformer models using Olmo 2 architecture (OLMo et al.,
+2024). In particular, we set n_layers=16, n_head=16, d_model=2048, head_dim=128.
+We use a batch size of 512, a learning rate of 0.0018 with a cosine scheduler with warmup and linear decay,
+and a sequence length of 4096. We use the Dolma 2 tokenizer.
+All 1B models were trained on 32 NVIDIA H100s (80 GB), while proxy models were trained on one NVIDIA
+H100.
+Evaluation. Table 9 lists all the downstream tasks.
+D.2
+Implementation Details
+For FullMixtureReuse and PartialMixtureReuse, the first ˜
+p is from applying OlmixBase on the
+initial web corpus. After each update, the newly recomputed mix becomes the ˜
+p of the next one.
+Across all swarm-based methods we evaluate on (OlmixBase, Swarm Reuse, FullMixtureReuse, PartialMixtureReuse), we use Ssmall = 30M parameters (architecture in Table 6) and train for 5x Chinchilla,
+with a batch size of 64, a learning rate of 0.007, and a sequence length of 2048.
+For any m domains we want to recompute, we set K to approximate c(m + 1) for linear multiplier c = 1, 2, 3.
+In particular, for c = 3, we set K = 2x to be the power of 2 that is closest to 3(m + 1). For c = 2, we set
+K = 2x−1. For c = 1, we set K = m + 1. When we recompute over m = 2 domains, we use search instead of
+regression, as the search space is one-dimensional. See Tables 10, 11, 12, and 13 for exact swarm sizes. We
+solve all of our mixture optimization problems using CVXPY and a KL regularization term with λ = 0.05.
+We set k = 4 and R = 1T for the repetition constraint of the experiments in §5.1.
+Algorithm 3 corresponds to the Swarm Reuse approach in §5.1, presenting another way to reuse prior
+information from mixing. The blue coloring indicates aspects of this algorithm that are different from
+OlmixBase.
+D.3
+Additional Results
+6T results. In Figure 24, we compare the performance versus cost of mixing strategies when R = 6T, a more
+data-constrained setting. We exclude PartialMixtureReuse since FullMixtureReuse performs well at
+R = 6T and only falls short at R = 1T (Figure 14).
+We find that FullMixtureReuse achieves 99% of full recomputation’s (c = 3) performance improvement
+(+6.94% versus +6.97%) while using 74% fewer total proxy runs (216 versus 832 runs). Swarm reuse achieves
+93% of full recomputation’s performance with 52 more runs than FullMixtureReuse.
+Low proxy run budget regime. While Figure 10 assesses performance versus number of proxy runs for
+cumulative costs ranging from 216 to 832 runs, it is unclear how recomputation strategies behave in a lower
+budget regime. We evaluate full recomputation with c = 1 (i.e., the minimum swarm size possible) and all
+other methods with K ≈c(m + 1) for c = 1, 2, 3, such that the range of total proxy runs considered is from 76
+to 272.
+Figure 25 shows performance versus number of proxy runs in a low budget regime. We make three observations:
+• The performance of swarm reuse versus FullMixtureReuse at low budgets is similar.
+• While the minimum number of proxy runs needed for full recomputation is 267, mixture reuse and swarm
+reuse unlock a lower budget regime, requiring as little as 76 runs. These reuse strategies can be attractive
+to practitioners with strict compute budgets and large domain sets that undergo many updates.
+• With only 76 runs, mixture reuse still achieves a +9.6% and +5% improvement over the natural distribution
+51
+
+Algorithm 3 Swarm Reuse Mixing
+1: Input: Old domain set D, new domain set D′, old swarm {(p
+j
+old, {yold
+ij }n
+i=1)}
+Kold
+j=1 , new swarm size
+Knew = O(∣D′∣), Dirichlet distribution P′, repetition factor k, requested tokens R.
+2: Sample new mixes p1
+new, . . . , pKnew
+new
+∼P′ on D′.
+3: Train proxy models on new mixes and evaluate on downstream tasks to get new swarm data
+{(pj
+new, {ynew
+ij
+}n
+i=1}
+Knew
+j=1 .
+4: Map old swarm mixes to new domain set: for j ∈[Kold], compute ˜
+p
+j
+old ∈△m′−1 from p
+j
+old ∈△m−1 where:
+• If Add: D = [D1, ∅] and D′ = [D1, D′
+2]. Then ˜
+p
+j
+old(D′
+i) = p
+j
+old(Di) for Di ∈D1, and ˜
+p
+j
+old(D′
+i) = 0 for
+D′
+i ∈D′
+2.
+• If Partition: D = [D1, {Dpar}] and D′ = [D1, {D1
+par, . . . , Dℓ
+par}] where Dpar = ⋃ℓ
+k=1 Dk
+par.
+Then
+˜
+p
+j
+old(D′
+i) = p
+j
+old(Di) for Di ∈D1, and ˜
+p
+j
+old(Dk
+par) = p
+j
+old(Dpar) ⋅
+NDk
+par
+∑ℓ
+k′=1 NDk′
+par
+for the partitioned domains.
+5: Construct combined swarm: S = {(˜
+p
+j
+old, {yold
+ij })}
+Kold
+j=1 ∪{(pj
+new, {ynew
+ij
+})}
+Knew
+j=1 .
+6: for i ∈[n] do
+7:
+Use combined swarm S to fit the log-linear model ˆ
+fi(p)=ci + exp(A⊤
+i p), where ci ∈R+ and Ai ∈R∣D′∣.
+8: end for
+9: Solve the optimization problem:
+minimizep∈△∣D′∣−1 1
+n
+n
+∑
+i=1
+ˆ
+fi(p)
+(14)
+subject to
+pj ≤
+kN ′
+j
+R
+∀j ∈∣D′∣
+10: Return p⋆, the solution on new domain set D′.
+when R = 1T and 6T, respectively.
+Proposedmixes. Table 14 shows the full mixtures corresponding to the natural distribution, full recomputation
+(best seed), and PartialMixtureReuse (best seed).
+Ablations for each domain update operator. We demonstrate that FullMixtureReuse attains performance
+similar to full recomputation for each type of domain update operator. We evaluate the following domain
+updates:
+• Add: we start with 24 DCLM topic-based domains. Then, we add 15 Stack-Edu programming language
+domains.
+• Remove: we start with 39 domains consisting of 24 DCLM topics and 15 Stack-Edu programming languages.
+Then, we remove the 15 Stack-Edu domains.
+• Partition: we start with 24 DCLM topics and a single Stack-Edu source domain. Then, we partition the
+Stack-Edu source into 15 programming language domains.
+• Revise: we start with 24 DCLM topics and a single StackV2 (Lozhkov et al., 2024) source domain. Then,
+the StackV2 domain is replaced with the Stack-Edu domain.
+For each operator, we compare FullMixtureReuse and the natural distribution over D′ (as a control)
+against full recomputation. We measure the total variation distance of the proposed mixtures with respect to
+full recomputation’s mix, defined as TV(q, q⋆) = 1
+2 ∑m′
+i=1 ∣qi −q⋆
+i ∣∈[0, 1]. We also measure performance gap
+relative to full recomputation’s downstream performance (average task BPB) for Add, Remove, and Partition.
+For our setup, we used k = 4, R = 6T.
+Figure 26 shows that FullMixtureReuse achieves substantially smaller performance gaps and TV distances
+52
+
+200
+300
+400
+500
+600
+700
+800
+Total number of proxy runs throughout LM development
+4
+5
+6
+7
+8
+% Improvement over Natural Distribution
+Better
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Figure 24 Performance improvement versus cost of mixing under evolving domains. FullMixtureReuse achieves
+99% of the improvement of full recomputation while using 74% fewer proxy runs.
+75
+100
+125
+150
+175
+200
+225
+250
+275
+Total number of proxy runs throughout LM development
+8.5
+9.0
+9.5
+10.0
+10.5
+11.0
+11.5
+12.0
+% Improvement over Natural Distribution
+Better
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Partial Mixture Reuse (Ours)
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Partial Mixture Reuse (Ours)
+75
+100
+125
+150
+175
+200
+225
+250
+275
+Total number of proxy runs throughout LM development
+4
+5
+6
+7
+8
+% Improvement over Natural Distribution
+Better
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Method
+Full Recomputation
+Swarm Reuse
+Full Mixture Reuse (Ours)
+Figure 25 Performance improvement versus cost of mixing under evolving domains for R = 1T (left) and R = 6T
+(right). Total number of proxy runs vary from 76 to 272.
+53
+
+Add
+Remove
+Partition
+0.0
+1.0
+2.0
+3.0
+4.0
+5.0
+6.0
+7.0
+8.0
+Perf. Gap to Full Recomp. (%)
+-0.1%
+1.5%
+1.2%
+3.5%
+7.6%
+3.5%
+Add
+Remove
+Partition
+0.0
+5.0
+10.0
+15.0
+20.0
+25.0
+30.0
+35.0
+TV Distance to Full Recomp. (%)
+13.9%
+22.2%
+20.8%
+37.3%
+37.0%
+37.3%
+Full Mixture Reuse
+Natural Distribution
+Figure 26 Relative performance gap (left) and total variation distance (right) w.r.t. full recomputation across domain
+update operators. FullMixtureReuse is substantially closer to full recomputation than the natural distribution
+across all three operators, in both performance and mixes.
+compared to the natural distribution across Add, Remove, and Partition. For Revise, the TV distance
+between FullMixtureReuse and full recomputation was only 0.21%—orders of magnitude smaller than
+other operators—indicating nearly identical mixes. We therefore did not evaluate downstream performance
+for Revise, as variation would be dominated by noise. These results demonstrate that mixture reuse works
+effectively across all domain update operators.
+54
+
+Table 8 Token counts for all domains in the final domain set. Sources with topic-level partitions (DCLM, Stack-Edu,
+olmOCR Science PDFs) are shown with indented topics. Single-source domains are shown without subdivision.
+Domain
+Token Count
+Domain
+Token Count
+DCLM (Li et al., 2024)
+Stack-Edu (Allal et al., 2025)
+Adult Content
+67,760,078,203
+C
+4,735,074,247
+Art and Design
+70,659,711,995
+C#
+7,204,525,343
+Crime and Law
+170,130,914,779
+C++
+12,530,445,761
+Education and Jobs
+184,690,792,861
+Go
+1,398,595,118
+Electronics and Hardware
+80,168,541,745
+Java
+31,347,725,888
+Entertainment
+441,768,061,760
+JavaScript
+8,886,972,357
+Fashion and Beauty
+37,256,539,512
+Markdown
+28,916,320,218
+Finance and Business
+310,313,927,581
+PHP
+7,395,033,318
+Food and Dining
+105,937,299,687
+Python
+18,017,832,560
+Games
+229,992,491,702
+Ruby
+1,386,775,805
+Health
+393,496,227,836
+Rust
+1,418,447,132
+History and Geography
+161,049,719,459
+SQL
+7,063,472,860
+Home and Hobbies
+126,910,777,314
+Shell
+2,542,637,875
+Industrial
+43,572,140,450
+Swift
+1,510,019,025
+Literature
+364,834,344,848
+TypeScript
+2,495,753,789
+Politics
+611,198,130,192
+Religion
+277,776,929,208
+olmOCR Science PDFs (Olmo et al., 2025)
+Science, Math and Technology
+427,131,054,341
+Adult
+303,073,226
+Social Life
+218,731,841,124
+Art and Design
+6,833,185,034
+Software
+108,039,380,021
+Crime and Law
+42,538,674,743
+Software Development
+223,384,974,282
+Education and Jobs
+138,127,926,093
+Sports and Fitness
+196,759,999,355
+Entertainment
+6,069,602,783
+Transportation
+90,793,306,202
+Fashion and Beauty
+557,917,820
+Travel and Tourism
+57,642,815,530
+Finance and Business
+61,150,044,703
+Food and Dining
+2,322,982,204
+Single-Source Domains
+Games
+2,486,095,532
+AlgebraicStack (Azerbayev et al., 2023)
+11,818,955,329
+Health
+108,215,933,374
+ArXiv (Azerbayev et al., 2023)
+20,773,846,846
+Home and Hobbies
+3,924,579,643
+FineMath-3+ (Allal et al., 2025)
+34,057,973,953
+Industrial
+29,389,278,657
+Pes2o (Soldaini and Lo, 2023)
+58,552,461,187
+Literature
+31,886,391,090
+Wikipedia (Soldaini et al., 2024)
+10,067,758,073
+Politics
+39,234,116,889
+Religion
+24,729,732,953
+Science and Technology
+424,245,385,160
+Software
+9,146,853,216
+Software Development
+41,841,278,724
+Sports and Fitness
+5,450,913,796
+Transportation
+17,149,342,957
+Travel
+2,102,425,717
+55
+
+Table 9 Details of the BPB evaluation suite. We use the OlmoBaseEval easy evaluation suite (Olmo et al.,
+2025), formatted as bits-per-byte (BPB) over gold continuations. † = few-shot examples are built-in the task; α =
+human-written few-shot examples. We treat subtasks as standalone tasks, except for MMLU, where we use averages
+over the four MMLU categories.
+Task
+Capability
+# ICL
+Metric
+# Subtasks
+Minerva MATH (2022)
+Math Gen
+4α
+BPB
+7
+Subtasks: Algebra, Counting and Probability, Geometry, Intermediate Algebra
+Math
+Number Theory, Prealgebra, Precalculus
+HumanEval (2021)
+Code Gen
+3
+BPB
+-
+MBPP (2021)
+Code Gen
+3
+BPB
+-
+MT MBPP (2022; 2025)
+Code Gen
+3
+BPB
+17
+Subtasks: Bash, C, C++, C#, Go, Haskell, Java, JavaScript, MatLab, PHP
+Code
+Python, R, Ruby, Rust, Scala, Swift, TypeScript
+ARC (2018)
+Science QA
+5
+BPB
+2
+Subtasks: ARC-Easy, ARC-Challenge
+MMLU STEM (2021)
+General QA
+5
+BPB
+19
+MMLU Humanities (2021)
+General QA
+5
+BPB
+13
+MMLU Social Sci. (2021)
+General QA
+5
+BPB
+12
+MMLU Other (2021)
+General QA
+5
+BPB
+14
+CSQA (2019)
+Commonsense QA
+5
+BPB
+-
+HellaSwag (2019)
+Language Modeling
+5
+BPB
+-
+WinoGrande (2020)
+Language Modeling
+5
+BPB
+-
+SocialIQA (2019)
+Social QA
+5
+BPB
+-
+PiQA (2020)
+Physical QA
+5
+BPB
+-
+CoQA (2019)
+Conversation QA
+0†
+BPB
+-
+DROP (2019)
+Passage QA
+5
+BPB
+-
+Jeopardy (2024)
+Trivia QA
+5
+BPB
+-
+NaturalQs (2019)
+General QA
+5
+BPB
+-
+SQuAD (2016)
+General QA
+5
+BPB
+-
+SciQ (2017)
+Science QA
+5
+BPB
+-
+Basic Skills (2025)
+Basic QA
+5
+BPB
+6
+Subtasks: Basic Arithmetic, String Manipulation, Simple Coding
+Elementary Logical Reasoning, Basic Common Sense, Simple Pattern Recognition
+Lambada (2016)
+Language Modeling
+0
+BPB
+-
+QA
+MedMCQA (2022)
+Medical QA
+5
+BPB
+-
+Table 10 Swarm details per stage for Full Recomputation. We list the number of domains recomputed at each stage,
+and the columns with c contain the number of proxy runs K ≈c(m + 1).
+Stage
+# domains recomputed
+c = 1
+c = 2
+c = 3
+Initial
+24
+25
+32
+64
+Add (Stack-Edu languages)
+39
+40
+64
+128
+Add (ArXiv, FineMath 3+, PDFs, Wiki, AlgebraicStack, pes2o)
+45
+46
+64
+128
+Revise (PDFs)
+45
+46
+64
+128
+Remove (AlgebraicStack)
+44
+45
+64
+128
+Partition (PDFs)
+64
+65
+128
+256
+Total # proxy runs
+267
+416
+832
+56
+
+Table 11 Swarm details per stage for Swarm Reuse. We list the number of domains recomputed at each stage, and
+the columns with c contain the number of additional proxy runs needed, K ≈c(m + 1). c = 3 corresponds to Figure 10.
+Stage
+# domains recomputed
+c = 1
+c = 2
+c = 3
+Initial
+24
+25
+32
+64
+Add (Stack-Edu languages)
+39
+15
+32
+64
+Add (ArXiv, FineMath 3+, PDFs, Wiki, AlgebraicStack, pes2o)
+45
+6
+6
+6
+Revise (PDFs)
+45
+6
+6
+6
+Remove (AlgebraicStack)
+44
+5
+5
+5
+Partition (PDFs)
+64
+20
+59
+123
+Total # proxy runs
+77
+140
+268
+Table 12 Swarm details per stage for Full Mixture Reuse. We list the number of domains recomputed at each stage,
+and the columns with c contain the number of proxy runs K ≈c(m + 1). c = 3 corresponds to Figure 10.
+Stage
+# domains recomputed
+c = 1
+c = 2
+c = 3
+Initial
+24
+25
+32
+64
+Add (Stack-Edu languages)
+16
+17
+32
+64
+Add (ArXiv, FineMath 3+, PDFs, Wiki, AlgebraicStack, pes2o)
+7
+8
+8
+16
+Revise (PDFs)
+2
+3
+4
+8
+Remove (AlgebraicStack)
+0
+0
+0
+0
+Partition (PDFs)
+22
+23
+32
+64
+Total # proxy runs
+76
+108
+216
+Table 13 Swarm details per stage for Partial Mixture Reuse. We list the number of domains recomputed at each
+stage, and the columns with c contain the number of proxy runs K ≈c(m + 1). c = 3 corresponds to Figure 10.
+Stage
+# domains (m)
+Proxy Runs (c = 3)
+Initial
+24
+64
+Add (Stack-Edu languages)
+17
+64
+Add (ArXiv, FineMath 3+, PDFs, Wiki, AlgebraicStack, pes2o)
+8
+32
+Revise (PDFs)
+8
+32
+Remove (AlgebraicStack)
+7
+16
+Partition (PDFs)
+27
+64
+Total # proxy runs
+272
+57
+
+Table 14 Mixture weights (full version of Figure 12) for the natural distribution, full recomputation, and PartialMixtureReuse.
+Domain
+Nat.
+Full
+Partial
+Domain
+Nat.
+Full
+Partial
+arxiv
+0.003320
+0.036555
+0.022549
+pdf:fashion_beauty
+0.000089
+0.000003
+0.000043
+dclm:adult_content
+0.010828
+0.006309
+0.004050
+pdf:finance_business
+0.009771
+0.004230
+0.001101
+dclm:art_and_design
+0.011291
+0.006265
+0.008097
+pdf:food_dining
+0.000371
+0.000113
+0.009292
+dclm:crime_and_law
+0.027186
+0.009991
+0.005497
+pdf:games
+0.000397
+0.000074
+0.009944
+dclm:education_and_jobs
+0.029513
+0.019003
+0.008874
+pdf:health
+0.017292
+0.013871
+0.006251
+dclm:electronics_and_hardware
+0.012811
+0.003289
+0.003360
+pdf:home_hobbies
+0.000627
+0.000396
+0.015698
+dclm:entertainment
+0.070592
+0.055739
+0.021609
+pdf:industrial
+0.004696
+0.002512
+0.000749
+dclm:fashion_and_beauty
+0.005953
+0.003134
+0.000769
+pdf:literature
+0.005095
+0.005713
+0.007648
+dclm:finance_and_business
+0.049587
+0.022324
+0.009896
+pdf:politics
+0.006269
+0.001782
+0.038680
+dclm:food_and_dining
+0.016928
+0.015615
+0.003785
+pdf:religion
+0.003952
+0.001056
+0.000088
+dclm:games
+0.036752
+0.018811
+0.013172
+pdf:science_tech
+0.067792
+0.029994
+0.014598
+dclm:health
+0.062879
+0.071471
+0.050413
+pdf:software
+0.001462
+0.001752
+0.000000
+dclm:history_and_geography
+0.025735
+0.028328
+0.008994
+pdf:software_dev
+0.006686
+0.001929
+0.015815
+dclm:home_and_hobbies
+0.020280
+0.017861
+0.005614
+pdf:sports_fitness
+0.000871
+0.000105
+0.000060
+dclm:industrial
+0.006963
+0.004541
+0.007756
+pdf:transportation
+0.002740
+0.001798
+0.068597
+dclm:literature
+0.058299
+0.048124
+0.026746
+pdf:travel
+0.000336
+0.000043
+0.007881
+dclm:politics
+0.097667
+0.034541
+0.011652
+stack-edu:C
+0.000757
+0.004088
+0.001655
+dclm:religion
+0.044387
+0.018381
+0.006006
+stack-edu:CSharp
+0.001151
+0.014910
+0.015118
+dclm:science_math_and_technology
+0.068254
+0.077043
+0.088744
+stack-edu:Cpp
+0.002002
+0.012993
+0.036761
+dclm:social_life
+0.034952
+0.018543
+0.011095
+stack-edu:Go
+0.000223
+0.003558
+0.004103
+dclm:software
+0.017264
+0.003887
+0.002666
+stack-edu:Java
+0.005009
+0.015251
+0.025259
+dclm:software_development
+0.035696
+0.018979
+0.025232
+stack-edu:JavaScript
+0.001420
+0.004582
+0.026072
+dclm:sports_and_fitness
+0.031441
+0.017050
+0.006516
+stack-edu:Markdown
+0.004621
+0.028525
+0.084832
+dclm:transportation
+0.014508
+0.006398
+0.003515
+stack-edu:PHP
+0.001182
+0.003491
+0.007554
+dclm:travel_and_tourism
+0.009211
+0.005433
+0.001804
+stack-edu:Python
+0.002879
+0.072071
+0.052859
+finemath-3plus
+0.005442
+0.136232
+0.136232
+stack-edu:Ruby
+0.000222
+0.000868
+0.004068
+pes2o
+0.009356
+0.012147
+0.006478
+stack-edu:Rust
+0.000227
+0.000008
+0.004161
+pdf:adult
+0.000048
+0.000907
+0.000016
+stack-edu:SQL
+0.001129
+0.001833
+0.002143
+pdf:art_design
+0.001092
+0.000231
+0.004289
+stack-edu:Shell
+0.000406
+0.008734
+0.007459
+pdf:crime_law
+0.006797
+0.002672
+0.000038
+stack-edu:Swift
+0.000241
+0.006040
+0.004430
+pdf:education_jobs
+0.022072
+0.010150
+0.005608
+stack-edu:TypeScript
+0.000399
+0.009983
+0.001015
+pdf:entertainment
+0.000970
+0.000087
+0.003318
+wikipedia
+0.001609
+0.017654
+0.011671
+58
