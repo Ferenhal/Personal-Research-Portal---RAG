@@ -1,8 +1,8 @@
 {
-  "created_at": "2026-02-15T22:16:26.164079+00:00",
+  "created_at": "2026-02-16T05:10:47.221872+00:00",
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "metric": "cosine (via IP on normalized vectors)",
-  "num_vectors": 525,
+  "num_vectors": 435,
   "dimension": 384,
   "chunks_path": "data/chunks/chunks.jsonl"
 }

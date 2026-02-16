@@ -33,7 +33,32 @@ CANON_HEADINGS = {
     "references": "References",
     "bibliography": "References",
     "appendix": "Appendix",
+    "acknowledgements": "Acknowledgements",
+    "acknowledgments": "Acknowledgements",
+    "supplementary material": "Supplementary",
+    "supplementary materials": "Supplementary",
 }
+
+# Sections that usually add noise for retrieval (reference lists, appendices, etc.)
+SKIP_SECTIONS_PREFIX = (
+    "references",
+    "bibliography",
+    "appendix",
+    "acknowledgements",
+    "acknowledgments",
+    "supplementary",
+)
+
+def should_skip_section(section_name: str) -> bool:
+    """
+    Skip sections that commonly contain irrelevant lexical noise for QA retrieval.
+    Handles variants like "References", "References and Notes", "Appendix A", etc.
+    """
+    s = (section_name or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    # remove leading numbering like "7 References"
+    s = re.sub(r"^\s*\d+(\.\d+)*\s*", "", s).strip()
+    return any(s.startswith(prefix) for prefix in SKIP_SECTIONS_PREFIX)
 
 
 def normalize_heading(line: str) -> Optional[str]:
@@ -61,13 +86,11 @@ def normalize_heading(line: str) -> Optional[str]:
     if m:
         candidate = m.group(2).strip()
 
-        # If candidate resembles one of our known headings, map it.
         cand_lower = candidate.lower()
         cand_lower = re.sub(r"\s+", " ", cand_lower)
         if cand_lower in CANON_HEADINGS:
             return CANON_HEADINGS[cand_lower]
-        
-        # Otherwise accept as a section label if it looks heading-like.
+
         if len(candidate) <= 60:
             return candidate
 
@@ -103,7 +126,6 @@ def split_into_sections(text: str) -> List[Dict]:
         if h:
             heading_idxs.append((i, h))
 
-    # If no headings, one big "Body" section.
     if not heading_idxs:
         return [{
             "section": "Body",
@@ -114,7 +136,6 @@ def split_into_sections(text: str) -> List[Dict]:
 
     sections = []
 
-    # Front matter before first detected heading.
     first_i, _ = heading_idxs[0]
     if first_i > 0:
         start = 0
@@ -128,7 +149,6 @@ def split_into_sections(text: str) -> List[Dict]:
                 "text": front_text,
             })
 
-    # Main sections.
     for idx, (i, sec_name) in enumerate(heading_idxs):
         j = heading_idxs[idx + 1][0] if idx + 1 < len(heading_idxs) else len(lines)
         start = spans[i][0] if i < len(spans) else 0
@@ -146,9 +166,6 @@ def split_into_sections(text: str) -> List[Dict]:
 
 
 def sliding_chunks(section_text: str, chunk_size: int, overlap: int) -> List[Tuple[int, int, str]]:
-    """
-    Returns list of (start, end, chunk_text) offsets relative to section_text.
-    """
     if overlap >= chunk_size:
         raise ValueError("overlap must be smaller than chunk_size")
 
@@ -237,9 +254,15 @@ def main():
 
         per_source_chunks = 0
         per_source_sections = 0
+        per_source_sections_skipped = 0
+        per_source_chunks_skipped = 0
 
         for sec in sections:
             sec_name = sec["section"]
+            if should_skip_section(sec_name):
+                per_source_sections_skipped += 1
+                continue
+
             sec_start_abs = int(sec["start_char"])
             sec_text = sec["text"]
             per_source_sections += 1
@@ -248,6 +271,7 @@ def main():
 
             for rel_start, rel_end, chunk_text in rel_chunks:
                 if len(chunk_text) < args.min_chunk_chars:
+                    per_source_chunks_skipped += 1
                     continue
 
                 chunk_id = f"{source_id}::c{global_chunk_idx:05d}"
@@ -266,7 +290,6 @@ def main():
                     "chunk_size_chars": args.chunk_size_chars,
                     "overlap_chars": args.overlap_chars,
                     "created_at": created_at,
-                    # Passthrough metadata for later debugging:
                     "title": row.get("title", ""),
                     "year": row.get("year", ""),
                     "type": row.get("type", ""),
@@ -281,7 +304,9 @@ def main():
             "source_id": source_id,
             "status": "ok",
             "sections_detected": per_source_sections,
+            "sections_skipped": per_source_sections_skipped,
             "chunks_written": per_source_chunks,
+            "chunks_skipped_short": per_source_chunks_skipped,
         })
 
     write_jsonl(out_path, chunk_rows)
