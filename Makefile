@@ -4,8 +4,13 @@ VENV := .venv
 PYTHON := /opt/homebrew/opt/python@3.12/bin/python3.12
 PY := $(VENV)/bin/python
 PIP := $(PY) -m pip
+OLLAMA_MODEL ?= llama3.2
 
 MANIFEST := data/manifest/Corpus.csv
+MANIFEST_ENRICHED := data/manifest/manifest.enriched.csv
+
+EVAL_QUERIES := data/eval/queries.jsonl
+
 RAW_DIR := data/raw
 PROCESSED_DIR := data/processed
 LOG_DIR := logs
@@ -42,3 +47,9 @@ chunk:
 index:
 	mkdir -p $(INDEX_DIR)
 	$(PY) -m src.index --chunks data/chunks/chunks.jsonl --index_dir $(INDEX_DIR) --log_dir $(LOG_DIR) --use_cosine
+
+query:
+	$(PY) -m src.query --question "$(Q)" --k 5 --index_dir data/index --chunks_path data/chunks/chunks.jsonl --log_dir $(LOG_DIR) --local_model "$(OLLAMA_MODEL)" --manifest_path "$(MANIFEST_ENRICHED)"
+
+eval:
+	$(PY) -m src.eval --queries $(EVAL_QUERIES) --index_dir $(INDEX_DIR) --chunks_path $(CHUNKS_PATH) --log_dir $(LOG_DIR) --local_model "$(OLLAMA_MODEL)" --manifest_path "$(MANIFEST_ENRICHED)"
