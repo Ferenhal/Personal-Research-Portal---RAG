@@ -4,7 +4,70 @@ This repository implements a baseline Retrieval-Augmented Generation (RAG) pipel
 
 The system ingests PDFs into cleaned text, chunks them, embeds and indexes chunks with FAISS, retrieves top-k evidence chunks for a query, and generates an answer using a local LLM via Ollama. Answers include inline chunk citations (for example, `[S001::c00002]`) and a deterministic `References` section built from the manifest.
 
-## What this RAG does
+---
+
+## The Streamlit portal (what you can do)
+
+The UI is implemented in `src/app/`:
+
+- **Search** (`0_Search.py`): retrieval-only (FAISS top-k chunks)
+- **Ask** (`1_Ask.py`): retrieval + generation + citations + logging (threaded)
+- **Threads** (`2_Threads.py`): browse past runs by thread; export thread summaries
+- **Evaluation** (`3_Evaluation.py`): run the eval set and view metrics + examples
+- **Artifacts** (`4_Artifacts.py`): generate and export an evidence table from a logged run
+
+The portal reads/writes local files:
+- reads: `data/chunks/chunks.jsonl`, `data/index/*`, `data/manifest/manifest.enriched.csv`
+- writes: `logs/query.jsonl`, `logs/eval_summary.csv` (and related logs)
+- optional exports: `outputs/` (if you choose “Write …” in the UI)
+
+---
+
+## Quickstart (fastest way to launch the UI)
+
+### Preconditions (first time only)
+1) Create the Python venv + install deps:
+```bash
+make setup
+```
+
+2) Install Ollama and pull the model:
+
+```bash
+ollama pull llama3.2
+```
+
+3) Build the local corpus index (required before asking questions in the UI):
+
+```bash
+make ingest chunk index
+```
+
+4) Launch the portal
+
+```bash
+make streamlit
+```
+
+Then open the local Streamlit URL printed in your terminal.
+
+If Streamlit asks for an onboarding email the first time you run it, you can just press Enter (blank) and continue.
+
+## Typical UI workflow (what to click)
+
+* Search: try keywords / phrases, verify retrieval quality and relevant sources.
+
+* Ask: ask a question; the system retrieves top-k evidence and generates a cited answer.
+
+* Threads: review saved runs grouped by thread_id; export the thread summary.
+
+* Artifacts: pick a run → generate an evidence table → export as Markdown/CSV/PDF.
+
+* Evaluation: run the evaluation set and inspect metrics + representative failures.
+
+---
+
+## What this RAG does (pipeline behavior)
 
 Given a question, the pipeline:
 
@@ -22,22 +85,21 @@ All runs are logged to `logs/` (queries, retrieved chunks, prompt IDs, outputs, 
 * `data/raw/` — raw PDF sources (the corpus)
 * `data/processed/` — cleaned extracted text per source
 * `data/manifest/`
-
   * `Corpus.csv` — initial corpus listing
   * `manifest.enriched.csv` — enriched manifest used by the pipeline
   * `manifest.enriched.jsonl` — JSONL manifest (if present)
 * `data/chunks/chunks.jsonl` — chunked corpus output
 * `data/index/` — FAISS index + metadata
-
   * `faiss.index`
   * `chunks_meta.jsonl`
   * `index_config.json`
 * `data/eval/queries.jsonl` — evaluation query set (>=20 queries)
 * `logs/` — machine-readable logs (ingest/chunk/index/query/eval)
 * `src/` — pipeline code
-
-  * `ingest.py`, `chunk.py`, `index.py`, `retrieve.py`, `query.py`, `eval.py`
+  * `ingest.py`, `chunk.py`, `index.py`, `retrieve.py`, `query.py`, `eval.py` - core pipelina
   * `generators/ollama_local.py` — local generation wrapper
+  * `app/Home.py`, `app/pages/*.py` - UI
+  * `artifacts/evidence_table.py` - artifacts
 
 ---
 
@@ -46,7 +108,7 @@ All runs are logged to `logs/` (queries, retrieved chunks, prompt IDs, outputs, 
 * macOS (tested on Apple M1 Silicon)
 * Python 3.12
 * Ollama (for local generation)
-* A pulled Ollama model: `llama3.2`
+* A pulled Ollama model (default is `llama3.2`)
 
 ---
 
@@ -165,7 +227,7 @@ make query Q="What is OptiGuide and what problem does it address?"
 
 What happens:
 
-* Retrieves top-k chunks (`k=5` by default in the Makefile target)
+* Retrieves top-k chunks (`k=5` by default)
 * Generates an answer using Ollama (`llama3.2`)
 * Validates citations (refuses if citations are invalid)
 * Appends a deterministic `References` section based on the manifest
@@ -251,6 +313,17 @@ Notes on interpretation:
 * Because invalid citations are blocked at runtime, citation precision is expected to be 1.0 for accepted answers; remaining failures are typically “missing citations,” “insufficient evidence retrieved,” or abstentions (“Not found in the corpus.”).
 * Coverage proxy is line-based and the output may include a `References` block, which can mechanically reduce the proxy even when substantive claims are correctly cited. Use it as a diagnostic signal, and inspect `logs/query.jsonl` for the actual answer text.
 
+### Artifacts and exports
+
+The portal can export:
+
+* Evidence table (Artifacts page): Markdown / CSV / PDF
+* Thread exports (Threads page): thread summary exports
+
+If you choose “Write …” in the UI, files are written to:
+
+* outputs/
+
 ### How to inspect failures
 
 1. Open `logs/eval_summary.csv` and identify low-performing queries (for example, low coverage proxy or zero citations).
@@ -289,6 +362,7 @@ make chunk           # chunk cleaned texts -> chunks.jsonl
 make index           # embed + build FAISS index
 make query Q="..."   # ask a question
 make eval            # run evaluation set
+make streamlit       # launch the Phase 3 portal UI
 make clean           # remove generated processed + logs (use with care)
 ```
 
@@ -302,6 +376,14 @@ If the Python code cannot reach `http://localhost:11434`, open the Ollama app or
 
 ```bash
 ollama run llama3.2
+```
+
+### Fresh corpus / changed PDFs
+
+If you add/remove PDFs in data/raw/, rerun:
+
+```bash
+make ingest chunk index
 ```
 
 ### Hugging Face warning (unauthenticated)

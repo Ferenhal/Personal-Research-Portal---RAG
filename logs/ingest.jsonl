@@ -1,16 +1,16 @@
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S001", "status": "ok", "raw_path": "data/raw/2307.03875v2.pdf", "text_path": "data/processed/S001.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S002", "status": "ok", "raw_path": "data/raw/2404.15604v1.pdf", "text_path": "data/processed/S002.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S003", "status": "ok", "raw_path": "data/raw/2406.06559v1.pdf", "text_path": "data/processed/S003.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S004", "status": "ok", "raw_path": "data/raw/2506.22485v1.pdf", "text_path": "data/processed/S004.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S005", "status": "ok", "raw_path": "data/raw/2601.09729v1.pdf", "text_path": "data/processed/S005.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S006", "status": "ok", "raw_path": "data/raw/2601.15509v1.pdf", "text_path": "data/processed/S006.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S007", "status": "ok", "raw_path": "data/raw/2601.17058v1.pdf", "text_path": "data/processed/S007.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S008", "status": "ok", "raw_path": "data/raw/2601.20674v1.pdf", "text_path": "data/processed/S008.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S009", "status": "ok", "raw_path": "data/raw/2602.00085v1.pdf", "text_path": "data/processed/S009.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S010", "status": "ok", "raw_path": "data/raw/2602.00426v1.pdf", "text_path": "data/processed/S010.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S011", "status": "ok", "raw_path": "data/raw/2602.00906v4.pdf", "text_path": "data/processed/S011.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S012", "status": "ok", "raw_path": "data/raw/2602.02378v1.pdf", "text_path": "data/processed/S012.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S013", "status": "ok", "raw_path": "data/raw/2602.11852v1.pdf", "text_path": "data/processed/S013.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S014", "status": "ok", "raw_path": "data/raw/2602.12237v1.pdf", "text_path": "data/processed/S014.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S015", "status": "ok", "raw_path": "data/raw/HalluClean - A Unified Framework to Combat Hallucinations in LLMs.pdf", "text_path": "data/processed/S015.txt"}
-{"timestamp": "2026-03-02T03:18:17.432658+00:00", "source_id": "S016", "status": "ok", "raw_path": "data/raw/INTELLIGENT IDENTIFICATION AND DECISION SUPPORT SYSTEM FOR TBM CONSTRUCTION RISK SYNERGISTICALLY DRIVEN BY KNOWLEDGE GRAPHS AND LARGE LANGUAGE MODELS.pdf", "text_path": "data/processed/S016.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S001", "status": "ok", "raw_path": "data/raw/2307.03875v2.pdf", "text_path": "data/processed/S001.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S002", "status": "ok", "raw_path": "data/raw/2404.15604v1.pdf", "text_path": "data/processed/S002.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S003", "status": "ok", "raw_path": "data/raw/2406.06559v1.pdf", "text_path": "data/processed/S003.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S004", "status": "ok", "raw_path": "data/raw/2506.22485v1.pdf", "text_path": "data/processed/S004.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S005", "status": "ok", "raw_path": "data/raw/2601.09729v1.pdf", "text_path": "data/processed/S005.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S006", "status": "ok", "raw_path": "data/raw/2601.15509v1.pdf", "text_path": "data/processed/S006.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S007", "status": "ok", "raw_path": "data/raw/2601.17058v1.pdf", "text_path": "data/processed/S007.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S008", "status": "ok", "raw_path": "data/raw/2601.20674v1.pdf", "text_path": "data/processed/S008.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S009", "status": "ok", "raw_path": "data/raw/2602.00085v1.pdf", "text_path": "data/processed/S009.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S010", "status": "ok", "raw_path": "data/raw/2602.00426v1.pdf", "text_path": "data/processed/S010.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S011", "status": "ok", "raw_path": "data/raw/2602.00906v4.pdf", "text_path": "data/processed/S011.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S012", "status": "ok", "raw_path": "data/raw/2602.02378v1.pdf", "text_path": "data/processed/S012.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S013", "status": "ok", "raw_path": "data/raw/2602.11852v1.pdf", "text_path": "data/processed/S013.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S014", "status": "ok", "raw_path": "data/raw/2602.12237v1.pdf", "text_path": "data/processed/S014.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S015", "status": "ok", "raw_path": "data/raw/HalluClean - A Unified Framework to Combat Hallucinations in LLMs.pdf", "text_path": "data/processed/S015.txt"}
+{"timestamp": "2026-03-02T04:35:35.467269+00:00", "source_id": "S016", "status": "ok", "raw_path": "data/raw/INTELLIGENT IDENTIFICATION AND DECISION SUPPORT SYSTEM FOR TBM CONSTRUCTION RISK SYNERGISTICALLY DRIVEN BY KNOWLEDGE GRAPHS AND LARGE LANGUAGE MODELS.pdf", "text_path": "data/processed/S016.txt"}

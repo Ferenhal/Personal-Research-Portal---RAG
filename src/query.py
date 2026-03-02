@@ -49,6 +49,8 @@ CRITICAL CITATION RULES:
 # (Do NOT skip Introduction by default; it often contains the definitions you need.)
 SKIP_SECTIONS = {
     "references",
+    "introduction",
+    "related work",
     "bibliography",
     "acknowledgements",
     "acknowledgments",
