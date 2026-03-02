@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-02-16T05:10:47.221872+00:00",
+  "created_at": "2026-03-02T03:22:34.643901+00:00",
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "metric": "cosine (via IP on normalized vectors)",
   "num_vectors": 435,

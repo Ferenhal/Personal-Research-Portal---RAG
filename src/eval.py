@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List
 
@@ -62,7 +63,7 @@ def main():
 
         # Run query pipeline
         cmd = [
-            str(Path(".venv/bin/python")),
+            sys.executable,
             "-m", "src.query",
             "--question", question,
             "--k", str(k),
